@@ -15,7 +15,10 @@ import { useToast } from '@/components/molecules/toaster/use-toast'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/atoms/dialog'
 import { Spinner } from '@/components/atoms/spinner'
 import useSelfProfileQuery from '@/hooks/useSelfProfile'
-import { PREDEFINED_SITE_CONFIGS } from '@/pages/SiteConfigManagement'
+import {
+  PREDEFINED_SITE_CONFIGS,
+  PREDEFINED_GENAI_CONFIG_KEYS,
+} from '@/pages/SiteConfigManagement'
 import { pushSiteConfigEdit } from '@/utils/siteConfigHistory'
 import NavBarActionsEditor, { NavBarAction } from '@/components/molecules/NavBarActionsEditor'
 import SiteConfigEditHistory from '@/components/molecules/SiteConfigEditHistory'
@@ -34,6 +37,9 @@ const PublicConfigSection: React.FC = () => {
   const [isSavingNavBarActions, setIsSavingNavBarActions] = useState(false)
   const [subTab, setSubTab] = useState<PublicSubTab>('config')
   const { toast } = useToast()
+
+  const isGenAIKey = (key: string) =>
+    PREDEFINED_GENAI_CONFIG_KEYS.includes(key)
 
   useEffect(() => {
     if (selfLoading || !self) return
@@ -55,16 +61,20 @@ const PublicConfigSection: React.FC = () => {
       const existingConfigs = res.results || []
       const existingKeys = new Set(existingConfigs.map(config => config.key))
 
-      // Find missing predefined configs and create them (excluding NAV_BAR_ACTIONS)
+      // Find missing predefined configs and create them (excluding NAV_BAR_ACTIONS and GenAI keys)
       // NAV_BAR_ACTIONS should only be created when user explicitly adds actions
       const missingConfigs = PREDEFINED_SITE_CONFIGS.filter(
-        config => !existingKeys.has(config.key) && config.key !== 'NAV_BAR_ACTIONS'
+        (config) =>
+          !existingKeys.has(config.key) &&
+          config.key !== 'NAV_BAR_ACTIONS' &&
+          !isGenAIKey(config.key),
       )
 
       // Find existing configs with empty values (empty string, null, or undefined) that should have defaults
       const configsToUpdate: any[] = []
       PREDEFINED_SITE_CONFIGS.forEach(predefinedConfig => {
         if (predefinedConfig.key === 'NAV_BAR_ACTIONS') return
+        if (isGenAIKey(predefinedConfig.key)) return
         
         const existingConfig = existingConfigs.find(c => c.key === predefinedConfig.key)
         if (existingConfig) {
@@ -97,11 +107,17 @@ const PublicConfigSection: React.FC = () => {
           limit: 100,
         })
 
-        // Filter to only show predefined configs (excluding NAV_BAR_ACTIONS)
-        const predefinedKeys = new Set(PREDEFINED_SITE_CONFIGS.map(c => c.key))
-        const predefinedOrder = new Map(PREDEFINED_SITE_CONFIGS.map((c, i) => [c.key, i]))
+        // Filter to only show predefined non‑GenAI configs (excluding NAV_BAR_ACTIONS)
+        const predefinedKeys = new Set(
+          PREDEFINED_SITE_CONFIGS.map((c) => c.key).filter(
+            (key) => !isGenAIKey(key) && key !== 'NAV_BAR_ACTIONS',
+          ),
+        )
+        const predefinedOrder = new Map(
+          PREDEFINED_SITE_CONFIGS.map((c, i) => [c.key, i]),
+        )
         const filteredConfigs = (updatedRes.results || [])
-          .filter(config => predefinedKeys.has(config.key) && config.key !== 'NAV_BAR_ACTIONS')
+          .filter((config) => predefinedKeys.has(config.key))
           .sort((a, b) => (predefinedOrder.get(a.key) ?? 999) - (predefinedOrder.get(b.key) ?? 999))
 
         // Load nav bar actions separately - only show actual DB data, empty if null/undefined
@@ -120,11 +136,17 @@ const PublicConfigSection: React.FC = () => {
 
         setConfigs(filteredConfigs)
       } else {
-        // Filter to only show predefined configs (excluding NAV_BAR_ACTIONS)
-        const predefinedKeys = new Set(PREDEFINED_SITE_CONFIGS.map(c => c.key))
-        const predefinedOrder = new Map(PREDEFINED_SITE_CONFIGS.map((c, i) => [c.key, i]))
+        // Filter to only show predefined non‑GenAI configs (excluding NAV_BAR_ACTIONS)
+        const predefinedKeys = new Set(
+          PREDEFINED_SITE_CONFIGS.map((c) => c.key).filter(
+            (key) => !isGenAIKey(key) && key !== 'NAV_BAR_ACTIONS',
+          ),
+        )
+        const predefinedOrder = new Map(
+          PREDEFINED_SITE_CONFIGS.map((c, i) => [c.key, i]),
+        )
         const filteredConfigs = existingConfigs
-          .filter(config => predefinedKeys.has(config.key) && config.key !== 'NAV_BAR_ACTIONS')
+          .filter((config) => predefinedKeys.has(config.key))
           .sort((a, b) => (predefinedOrder.get(a.key) ?? 999) - (predefinedOrder.get(b.key) ?? 999))
 
         // Load nav bar actions separately - only show actual DB data, empty if null/undefined
@@ -270,9 +292,11 @@ const PublicConfigSection: React.FC = () => {
 
     try {
       setIsLoading(true)
-      // Only delete public configs (predefined public keys + NAV_BAR_ACTIONS), not other sections
+      // Only delete public configs (predefined non‑GenAI keys + NAV_BAR_ACTIONS), not other sections
       const publicKeys = new Set([
-        ...PREDEFINED_SITE_CONFIGS.map((c) => c.key),
+        ...PREDEFINED_SITE_CONFIGS
+          .map((c) => c.key)
+          .filter((key) => !isGenAIKey(key)),
         'NAV_BAR_ACTIONS',
       ])
 

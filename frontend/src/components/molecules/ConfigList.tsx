@@ -32,6 +32,7 @@ export type SiteConfigHistorySection =
   | 'style'
   | 'secrets'
   | 'staging'
+  | 'genai'
 
 interface ConfigListProps {
   configs: Config[]
@@ -319,9 +320,22 @@ const ConfigList: React.FC<ConfigListProps> = ({
                       <div className="flex items-center space-x-2">
                         <Checkbox
                           checked={Boolean(editValue)}
-                          onCheckedChange={(checked) => setEditValue(checked)}
+                          onCheckedChange={(checked) =>
+                            setEditValue(Boolean(checked))
+                          }
+                          className="cursor-pointer"
                         />
-                        <Label>{String(Boolean(editValue))}</Label>
+                        <button
+                          type="button"
+                          className="cursor-pointer select-none"
+                          onClick={() =>
+                            setEditValue(!Boolean(editValue))
+                          }
+                        >
+                          <Label className="cursor-pointer">
+                            {String(Boolean(editValue))}
+                          </Label>
+                        </button>
                       </div>
                     )}
                     {config.valueType === 'number' && (

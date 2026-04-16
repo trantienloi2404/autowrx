@@ -132,7 +132,7 @@ const listTextFilesRecursively = (rootPath) => {
 };
 
 const readPrototypeCodeFromPrototypesPath = (userId, modelId, prototypeName) => {
-  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/var/lib/autowrx/prototypes';
+  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/opt/autowrx/prototypes';
   const prototypeFolder = path.join(
     prototypesRoot,
     String(userId),

@@ -31,7 +31,7 @@ data "coder_parameter" "prototypes_host_path" {
   name         = "prototypes_host_path"
   display_name = "Prototypes Host Path"
   description  = "Host path mounted to /home/coder/prototypes (must match AutoWRX PROTOTYPES_PATH layout)."
-  default      = "/var/lib/autowrx/prototypes"
+  default      = "/opt/autowrx/prototypes"
   mutable      = true
 }
 

@@ -288,7 +288,7 @@ export const PREDEFINED_SITE_CONFIGS: any[] = [
   {
     key: 'PROTOTYPES_PATH',
     scope: 'site',
-    value: '/var/lib/autowrx/prototypes',
+    value: '/opt/autowrx/prototypes',
     secret: false,
     valueType: 'string',
     description:

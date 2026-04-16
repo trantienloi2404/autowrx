@@ -14,7 +14,7 @@ const DEFAULTS = {
   enabled: false,
   coderUrl: 'http://localhost:7080',
   adminApiKey: '',
-  prototypesPath: '/var/lib/autowrx/prototypes',
+  prototypesPath: '/opt/autowrx/prototypes',
 };
 
 const CACHE_DURATION_MS = 10 * 1000; // refresh at most every 10s

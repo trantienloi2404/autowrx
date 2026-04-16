@@ -18,7 +18,7 @@ docker exec -it coder /opt/coder login http://localhost:7080 \
   --first-user-trial=false
 
 echo "Preparing Template files..."
-(cd autowrx-runner && yarn vsix -- -o ../workspace-image/autowrx-runner.vsix)
+(cd autowrx-runner && yarn install && yarn vsix -- -o ../workspace-image/autowrx-runner.vsix)
 rm -rf ./my-template-dir template-python.tar template-cpp.tar template-rust.tar
 
 mkdir -p ./my-template-dir/python ./my-template-dir/cpp ./my-template-dir/rust

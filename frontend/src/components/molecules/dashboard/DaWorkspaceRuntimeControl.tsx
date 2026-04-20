@@ -8,7 +8,7 @@
 
 /**
  * Sidebar runtime panel: Coder workspace only (no hardware kit / DaRuntimeConnector).
- * Polls `.autowrx_out`, merges NDJSON lines into runtimeStore for dashboard widgets.
+ * Streams run output over WebSocket and merges NDJSON into workspaceRuntimeStore.
  */
 
 import { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -30,7 +30,9 @@ import WorkspacePrototypeVarsWatch from './WorkspacePrototypeVarsWatch'
 import { countCodeExecution } from '@/services/prototype.service'
 import { useSystemUI } from '@/hooks/useSystemUI'
 import { useParams } from 'react-router-dom'
-import { triggerWorkspaceRun, getWorkspaceRunOutput } from '@/services/coder.service'
+import { triggerWorkspaceRun } from '@/services/coder.service'
+import useAuthStore from '@/stores/authStore'
+import config from '@/configs/config'
 
 const AlwaysScrollToBottom = () => {
   const elementRef = useRef<HTMLDivElement>(null)
@@ -43,7 +45,7 @@ const AlwaysScrollToBottom = () => {
   return <div ref={elementRef} />
 }
 
-/** Merge NDJSON lines (one JSON object per line) from workspace `.autowrx_out` into apisValue for dashboard widgets. */
+/** Merge NDJSON lines (one JSON object per line) into apisValue for dashboard widgets. */
 function patchApisFromNdjsonContent(
   content: string,
   setActiveApis: (v: Record<string, unknown>) => void,
@@ -84,6 +86,7 @@ const DaWorkspaceRuntimeControl: FC = () => {
   const { data: model } = useCurrentModel()
   const [isAuthorized] = usePermissionHook([PERMISSIONS.READ_MODEL, model?.id])
   const { showPrototypeDashboardFullScreen } = useSystemUI()
+  const accessToken = useAuthStore((state) => state.access?.token)
 
   const [setActiveApis, setTraceVars, setAppLog] = useWorkspaceRuntimeStore(
     (state) => [state.setActiveApis, state.setTraceVars, state.setAppLog],
@@ -91,17 +94,14 @@ const DaWorkspaceRuntimeControl: FC = () => {
 
   const [isExpand, setIsExpand] = useState(false)
   const [activeTab, setActiveTab] = useState<string>('output')
-  /** Last `.autowrx_out` mtime from server (for clear-until-new-run). */
-  const vscodeRunOutputMtimeRef = useRef(0)
-  /** When set, hide run output until server file `mtimeMs` is greater than this. */
-  const vscodeRunOutputClearBaselineRef = useRef<number | null>(null)
   const [vscodeRunOutput, setVscodeRunOutput] = useState('')
+  const [stdinLine, setStdinLine] = useState('')
+  const wsRef = useRef<WebSocket | null>(null)
 
   const prototypeIdForCoder = prototype?.id ?? routePrototypeId ?? ''
 
   const handleClearLog = () => {
     setVscodeRunOutput('')
-    vscodeRunOutputClearBaselineRef.current = vscodeRunOutputMtimeRef.current
   }
 
   /** Run inside Coder workspace (`.autowrx_run` → VS Code extension). */
@@ -134,38 +134,52 @@ const DaWorkspaceRuntimeControl: FC = () => {
     })
   }
 
-  /** Poll workspace terminal output; merge NDJSON lines into runtime store for dashboard charts. */
-  useEffect(() => {
-    if (!prototypeIdForCoder || !isAuthorized) return
+  const toWsBase = (baseUrl: string) => {
+    if (baseUrl.startsWith('https://')) return baseUrl.replace('https://', 'wss://')
+    if (baseUrl.startsWith('http://')) return baseUrl.replace('http://', 'ws://')
+    return `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}`
+  }
 
-    let cancelled = false
-    const poll = async () => {
+  /** Stream workspace run output via backend WS broker; merge NDJSON into store for widgets. */
+  useEffect(() => {
+    if (!prototypeIdForCoder || !isAuthorized || !accessToken) return
+
+    const wsBase = toWsBase(config.serverBaseUrl)
+    const wsUrl = `${wsBase}/${config.serverVersion}/system/coder/workspace/${prototypeIdForCoder}/run-ws?access_token=${encodeURIComponent(accessToken)}`
+    const ws = new WebSocket(wsUrl)
+    wsRef.current = ws
+
+    ws.onmessage = (event) => {
       try {
-        const data = await getWorkspaceRunOutput(prototypeIdForCoder)
-        if (cancelled) return
-        vscodeRunOutputMtimeRef.current = data.mtimeMs
-        const baseline = vscodeRunOutputClearBaselineRef.current
-        if (baseline !== null && data.mtimeMs <= baseline) {
+        const payload = JSON.parse(String(event.data))
+        if (!payload || typeof payload !== 'object') return
+        if (payload.type === 'run.output') {
+          const text = String(payload.data || '')
+          if (!text) return
+          setVscodeRunOutput((prev) => prev + text)
+          setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + text)
+          patchApisFromNdjsonContent(text, setActiveApis)
           return
         }
-        vscodeRunOutputClearBaselineRef.current = null
-        setVscodeRunOutput((prev) =>
-          prev === data.content ? prev : data.content,
-        )
-        setAppLog(data.content ?? '')
-        patchApisFromNdjsonContent(data.content ?? '', setActiveApis)
+        if (payload.type === 'run.exit') {
+          const summary = `\n[run.exit] code=${payload.code} signal=${payload.signal || 'none'}\n`
+          setVscodeRunOutput((prev) => prev + summary)
+          setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
+        }
       } catch {
-        /* keep last good output */
+        // ignore malformed messages
       }
     }
 
-    void poll()
-    const id = window.setInterval(() => void poll(), 1000)
     return () => {
-      cancelled = true
-      window.clearInterval(id)
+      try {
+        ws.close(1000, 'unmount')
+      } catch {
+        // ignore
+      }
+      if (wsRef.current === ws) wsRef.current = null
     }
-  }, [prototypeIdForCoder, isAuthorized, setActiveApis, setAppLog])
+  }, [prototypeIdForCoder, isAuthorized, accessToken, setActiveApis, setAppLog])
 
   const writeSignalValue = useCallback(
     (obj: Record<string, unknown> | null | undefined) => {
@@ -221,6 +235,20 @@ const DaWorkspaceRuntimeControl: FC = () => {
     return vscodeRunOutput
   }, [vscodeRunOutput])
 
+  const submitStdinLine = () => {
+    const value = stdinLine.trimEnd()
+    if (!value) return
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(
+      JSON.stringify({
+        type: 'run.stdin',
+        data: value,
+      }),
+    )
+    setStdinLine('')
+  }
+
   return (
     <div
       data-id="workspace-runtime-control-panel"
@@ -251,6 +279,20 @@ const DaWorkspaceRuntimeControl: FC = () => {
                 >
                   {outputPanelText}
                   <AlwaysScrollToBottom />
+                </div>
+                <div className="mt-2 flex items-center gap-2">
+                  <input
+                    value={stdinLine}
+                    placeholder="Send stdin line..."
+                    className="w-full rounded px-2 py-1 text-da-gray-dark text-sm"
+                    onChange={(e) => setStdinLine(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') submitStdinLine()
+                    }}
+                  />
+                  <Button size="sm" onClick={submitStdinLine}>
+                    Send
+                  </Button>
                 </div>
               </div>
             )}

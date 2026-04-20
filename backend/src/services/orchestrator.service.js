@@ -18,6 +18,7 @@ const ApiError = require('../utils/ApiError');
 const coderConfig = require('../utils/coderConfig');
 const { PERMISSIONS } = require('../config/roles');
 const { getPrototypeFolderRelativePath } = require('../utils/prototypePath');
+const workspaceRunWsHub = require('./workspaceRunWsHub.service');
 const {
   resolveWorkspaceKindFromPrototype,
   getTemplateNameForWorkspaceKind,
@@ -342,6 +343,12 @@ const resolveRunKindFromPrototype = (prototype) => {
   return 'python-main';
 };
 
+const buildRunCommandForPrototype = (prototype) => {
+  const runKind = resolveRunKindFromPrototype(prototype);
+  const command = resolveRunCommand(runKind);
+  return { runKind, command };
+};
+
 /**
  * Write `.autowrx_run` on the host prototypes volume so the VS Code extension in the
  * Coder workspace (same mount) can pick it up via FileSystemWatcher.
@@ -360,27 +367,30 @@ const triggerRunForPrototype = async (userId, prototype, runKind) => {
     throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
   }
 
-  const { prototypesPath } = coderCfg;
-  if (!prototypesPath) {
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Prototypes path is not configured');
+  const workspaceKind = resolveWorkspaceKindFromPrototype(prototype);
+  const user = await User.findById(userId);
+  const workspaceId = await workspaceBindingService.getWorkspaceIdForUser(user, workspaceKind);
+  if (!workspaceId) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Workspace not found. Prepare workspace first.');
   }
 
-  const prototypeFolderRelativePath = getPrototypeFolderRelativePath(prototype);
-  const userHostPath = path.join(prototypesPath, userId.toString());
-  const prototypeFolderHost = path.join(userHostPath, prototypeFolderRelativePath);
-  const triggerFilePath = path.join(prototypeFolderHost, '.autowrx_run');
+  const sent = workspaceRunWsHub.sendToRunners(workspaceId, {
+    type: 'run.start',
+    workspaceId: String(workspaceId),
+    prototypeId: String(prototype.id),
+    runKind,
+    command: safeCommand,
+    at: new Date().toISOString(),
+  });
 
-  try {
-    fs.mkdirSync(prototypeFolderHost, { recursive: true, mode: 0o777 });
-    ensureHostFolderPermissions(prototypeFolderHost);
-    fs.writeFileSync(triggerFilePath, safeCommand, 'utf8');
-    ensureHostFolderPermissions(triggerFilePath);
-    ensureHostPrototypeTreePermissions(prototypeFolderHost);
-    logger.info(`Wrote Coder trigger file for prototype ${prototype.id}: ${triggerFilePath}`);
-  } catch (err) {
-    logger.error(`Failed to write trigger file ${triggerFilePath}: ${err.message}`);
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to write run trigger: ${err.message}`);
+  if (!sent) {
+    throw new ApiError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      'AutoWRX Runner extension is not connected for this workspace',
+    );
   }
+
+  logger.info(`Sent run.start to runner(s) for workspace=${workspaceId}, prototype=${prototype.id}`);
 };
 
 const MAX_RUN_OUTPUT_BYTES = 512 * 1024;
@@ -429,4 +439,5 @@ module.exports = {
   triggerRunForPrototype,
   getRunOutputForPrototype,
   resolveRunKindFromPrototype,
+  buildRunCommandForPrototype,
 };

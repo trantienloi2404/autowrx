@@ -151,6 +151,8 @@ resource "docker_container" "workspace" {
   env = [
     "CODER_AGENT_TOKEN=${coder_agent.main.token}",
     "CODER_AGENT_URL=http://coder:7080/",
+    "CODER_WORKSPACE_ID=${data.coder_workspace.me.id}",
+    "AUTOWRX_RUNNER_WS_URL=ws://host.docker.internal:3200/v2/system/coder/runner/ws",
   ]
 
   host {

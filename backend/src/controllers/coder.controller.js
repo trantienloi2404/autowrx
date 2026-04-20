@@ -184,7 +184,7 @@ const prepareWorkspace = catchAsync(async (req, res) => {
 });
 
 /**
- * Write `.autowrx_run` on the host prototypes volume for the VS Code extension (file watcher).
+ * Send run request to AutoWRX Runner extension over WebSocket broker.
  */
 const triggerRun = catchAsync(async (req, res) => {
   const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
@@ -208,7 +208,7 @@ const triggerRun = catchAsync(async (req, res) => {
   const runKind = orchestratorService.resolveRunKindFromPrototype(prototype);
   await orchestratorService.triggerRunForPrototype(userId, prototype, runKind);
 
-  res.status(httpStatus.OK).json({ message: 'Run request written to workspace' });
+  res.status(httpStatus.OK).json({ message: 'Run request sent to workspace runner' });
 });
 
 /**

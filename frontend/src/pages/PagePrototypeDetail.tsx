@@ -31,7 +31,7 @@ import PrototypeTabCode from '@/components/organisms/PrototypeTabCode'
 import PrototypeTabVSCode from '@/components/organisms/PrototypeTabVSCode'
 import PrototypeTabDashboard from '@/components/organisms/PrototypeTabDashboard'
 import PrototypeTabFeedback from '@/components/organisms/PrototypeTabFeedback'
-import DaRuntimeControl from '@/components/molecules/dashboard/DaRuntimeControl'
+import DaWorkspaceRuntimeControl from '@/components/molecules/dashboard/DaWorkspaceRuntimeControl'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -601,7 +601,7 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
                 />
               )}
           </div>
-          {showRt && <DaRuntimeControl />}
+          {showRt && <DaWorkspaceRuntimeControl />}
         </div>
       </div>
 

@@ -7,13 +7,13 @@
 // SPDX-License-Identifier: MIT
 
 import { FC, useEffect, useState, useRef, useMemo } from 'react'
-import useRuntimeStore from '@/stores/runtimeStore'
+import useWorkspaceRuntimeStore from '@/stores/workspaceRuntimeStore'
 import { WidgetConfig } from '@/types/widget.type'
 import DaDialog from '@/components/molecules/DaDialog'
 import useCurrentModelApi from '@/hooks/useCurrentModelApi'
 import { calculateSpans } from '@/lib/utils'
 
-interface DaDashboardGridProps {
+interface DaWorkspaceDashboardGridProps {
   widgetItems: any[]
   appLog?: string
 }
@@ -41,8 +41,6 @@ const WidgetItem: FC<PropsWidgetItem> = ({
     if (!widgetConfig) return
     let url = widgetConfig.url
 
-    // Don't append query parameters to built-in widget paths (local static files)
-    // They receive options via postMessage instead
     if (url && url.startsWith('/builtin-widgets/')) {
       setUrl(url)
     } else if (url && widgetConfig.options) {
@@ -61,11 +59,6 @@ const WidgetItem: FC<PropsWidgetItem> = ({
   }, [widgetConfig?.boxes])
 
   useEffect(() => {
-    let setData = JSON.parse(JSON.stringify(apisValue))
-    for (const api in setData) {
-      setData[api] = { value: setData[api] }
-    }
-
     frameElement?.current?.contentWindow?.postMessage(
       JSON.stringify({
         cmd: 'vss-sync',
@@ -102,7 +95,6 @@ const WidgetItem: FC<PropsWidgetItem> = ({
     sendAppLogToWidget(appLog)
   }, [appLog])
 
-  // Send VSS tree to widget when both iframe is loaded AND vssTree is available
   useEffect(() => {
     if (!iframeLoaded || !vssTree) return
     sendVssTreeToWidget(vssTree)
@@ -125,10 +117,8 @@ const WidgetItem: FC<PropsWidgetItem> = ({
         className="m-0 h-full w-full"
         allow="camera;microphone"
         onLoad={() => {
-          // Mark iframe as loaded
           setIframeLoaded(true)
 
-          // Send widget options via postMessage for built-in widgets
           if (widgetConfig?.url?.startsWith('/builtin-widgets/')) {
             setTimeout(() => {
               if (widgetConfig?.options) {
@@ -140,7 +130,6 @@ const WidgetItem: FC<PropsWidgetItem> = ({
                   '*',
                 )
               }
-              // VSS tree will be sent by useEffect when both iframe and vssTree are ready
             }, 100)
           }
         }}
@@ -149,15 +138,15 @@ const WidgetItem: FC<PropsWidgetItem> = ({
   )
 }
 
-const DaDashboardGrid: FC<DaDashboardGridProps> = ({ widgetItems }) => {
+const DaWorkspaceDashboardGrid: FC<DaWorkspaceDashboardGridProps> = ({
+  widgetItems,
+}) => {
   const [showModal, setShowModal] = useState(false)
   const [payload, setPayload] = useState<any>()
   const { data: cvi } = useCurrentModelApi()
-  
-  // Memoize VSS tree to prevent unnecessary re-renders with large data
   const memoizedVssTree = useMemo(() => cvi, [cvi])
 
-  const [apisValue, traceVars, appLog] = useRuntimeStore((state) => [
+  const [apisValue, traceVars, appLog] = useWorkspaceRuntimeStore((state) => [
     state.apisValue,
     state.traceVars,
     state.appLog,
@@ -235,7 +224,7 @@ const DaDashboardGrid: FC<DaDashboardGridProps> = ({ widgetItems }) => {
             const widgetIndex = widgetItems.findIndex((w) =>
               w.boxes?.includes(cell),
             )
-            
+
             if (widgetIndex !== -1 && !renderedWidgets.has(widgetIndex)) {
               renderedWidgets.add(widgetIndex)
               return (
@@ -248,7 +237,6 @@ const DaDashboardGrid: FC<DaDashboardGridProps> = ({ widgetItems }) => {
                 />
               )
             } else if (widgetIndex === -1) {
-              // Empty cell
               return (
                 <div
                   key={`empty-${cell}`}
@@ -256,7 +244,6 @@ const DaDashboardGrid: FC<DaDashboardGridProps> = ({ widgetItems }) => {
                 />
               )
             }
-            // Cell is occupied by a widget that spans multiple cells
             return null
           })
         })()}
@@ -265,4 +252,4 @@ const DaDashboardGrid: FC<DaDashboardGridProps> = ({ widgetItems }) => {
   )
 }
 
-export default DaDashboardGrid
+export default DaWorkspaceDashboardGrid

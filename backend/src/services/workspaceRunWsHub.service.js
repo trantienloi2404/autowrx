@@ -11,6 +11,11 @@ const logger = require('../config/logger');
 const channels = new Map();
 
 const nowIso = () => new Date().toISOString();
+const buildRunnerStatePayload = (workspaceId, connected) => ({
+  type: connected ? 'runner.connected' : 'runner.disconnected',
+  workspaceId: String(workspaceId),
+  at: nowIso(),
+});
 
 const ensureChannel = (workspaceId) => {
   const key = String(workspaceId);
@@ -55,11 +60,7 @@ const attachCloseCleanup = (workspaceId, conn, collectionName) => {
       // ignore
     }
     if (collectionName === 'runners' && hadConn && channel.runners.size === 0) {
-      broadcastToWeb(workspaceId, {
-        type: 'runner.disconnected',
-        workspaceId: String(workspaceId),
-        at: nowIso(),
-      });
+      broadcastToWeb(workspaceId, buildRunnerStatePayload(workspaceId, false));
     }
     cleanupChannel(workspaceId);
   };
@@ -72,16 +73,8 @@ const registerRunner = (workspaceId, conn) => {
   channel.runners.add(conn);
   attachCloseCleanup(workspaceId, conn, 'runners');
 
-  safeSend(conn, {
-    type: 'runner.connected',
-    workspaceId: String(workspaceId),
-    at: nowIso(),
-  });
-  broadcastToWeb(workspaceId, {
-    type: 'runner.connected',
-    workspaceId: String(workspaceId),
-    at: nowIso(),
-  });
+  safeSend(conn, buildRunnerStatePayload(workspaceId, true));
+  broadcastToWeb(workspaceId, buildRunnerStatePayload(workspaceId, true));
 
   logger.info(`[workspace-run-ws] runner registered workspace=${workspaceId}`);
 };
@@ -90,11 +83,7 @@ const registerWeb = (workspaceId, conn) => {
   const channel = ensureChannel(workspaceId);
   channel.webs.add(conn);
   attachCloseCleanup(workspaceId, conn, 'webs');
-  safeSend(conn, {
-    type: channel.runners.size > 0 ? 'runner.connected' : 'runner.disconnected',
-    workspaceId: String(workspaceId),
-    at: nowIso(),
-  });
+  safeSend(conn, buildRunnerStatePayload(workspaceId, channel.runners.size > 0));
   logger.info(`[workspace-run-ws] web registered workspace=${workspaceId}`);
 };
 

@@ -5,6 +5,7 @@ const TERMINAL_NAME = 'AutoWRX Console';
 const RUNNER_RECONNECT_MS = 3000;
 const SHELL_INTEGRATION_WAIT_MS = 150;
 const SHELL_INTEGRATION_MAX_ATTEMPTS = 20;
+const LOCAL_FALLBACK_RUNNER_WS_URL = 'ws://127.0.0.1:3200/v2/system/coder/runner/ws';
 
 function activate(context) {
     console.log('AutoWRX runner extension is active');
@@ -39,7 +40,7 @@ class RunnerBridge {
         const explicit = String(process.env.AUTOWRX_RUNNER_WS_URL || '').trim();
         if (explicit) return explicit;
         // Fallback for local/dev scenarios.
-        return 'ws://127.0.0.1:3200/v2/system/coder/runner/ws';
+        return LOCAL_FALLBACK_RUNNER_WS_URL;
     }
 
     ensureTerminal() {
@@ -89,7 +90,7 @@ class RunnerBridge {
                 const payload = JSON.parse(String(raw));
                 this.handleMessage(payload);
             } catch (error) {
-                this.appendTerminal(`[AutoWRX Runner] Invalid message: ${error?.message || error}`);
+                this.log(`[AutoWRX Runner] invalid message: ${error?.message || error}`);
             }
         });
 

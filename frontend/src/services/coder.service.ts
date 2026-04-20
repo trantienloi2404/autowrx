@@ -43,10 +43,7 @@ export const prepareWorkspace = async (prototypeId: string): Promise<WorkspaceIn
   return response.data
 }
 
-/**
- * Write `.autowrx_run` on the server prototypes volume; VS Code extension picks it up via file watcher.
- * Run command is chosen on the server from `prototype.language`.
- */
+/** Trigger run request to AutoWRX Runner over workspace WebSocket hub. */
 export const triggerWorkspaceRun = async (prototypeId: string): Promise<void> => {
   await serverAxios.post(`/system/coder/workspace/${prototypeId}/trigger-run`, {})
 }

@@ -15,6 +15,7 @@ import { FC, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/atoms/button'
 import { TbPlayerPlayFilled } from 'react-icons/tb'
 import { FaAnglesLeft, FaAnglesRight } from 'react-icons/fa6'
+import { MdStop } from 'react-icons/md'
 import { cn } from '@/lib/utils'
 import useModelStore from '@/stores/modelStore'
 import useWorkspaceRuntimeStore from '@/stores/workspaceRuntimeStore'
@@ -33,6 +34,14 @@ import { useParams } from 'react-router-dom'
 import { triggerWorkspaceRun } from '@/services/coder.service'
 import useAuthStore from '@/stores/authStore'
 import config from '@/configs/config'
+
+type WorkspaceRunUiStatus =
+  | 'connecting'
+  | 'ready'
+  | 'running'
+  | 'waiting_input'
+  | 'exited'
+  | 'error'
 
 const AlwaysScrollToBottom = () => {
   const elementRef = useRef<HTMLDivElement>(null)
@@ -96,6 +105,9 @@ const DaWorkspaceRuntimeControl: FC = () => {
   const [activeTab, setActiveTab] = useState<string>('output')
   const [vscodeRunOutput, setVscodeRunOutput] = useState('')
   const [stdinLine, setStdinLine] = useState('')
+  const [runStatus, setRunStatus] = useState<WorkspaceRunUiStatus>('connecting')
+  const [wsReady, setWsReady] = useState(false)
+  const [runBlockReason, setRunBlockReason] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
 
   const prototypeIdForCoder = prototype?.id ?? routePrototypeId ?? ''
@@ -108,9 +120,20 @@ const DaWorkspaceRuntimeControl: FC = () => {
   const handleCoderWorkspaceRun = () => {
     const id = prototype?.id ?? routePrototypeId
     if (!id) return
+    if (!wsReady) {
+      setRunStatus('error')
+      setRunBlockReason(
+        'Runner websocket is not connected yet. Wait until status is ready.',
+      )
+      return
+    }
     setActiveTab('output')
+    setRunStatus('running')
+    setRunBlockReason('')
     void triggerWorkspaceRun(id).catch((error) => {
       console.error('[DaWorkspaceRuntimeControl] Coder trigger-run failed:', error)
+      setRunStatus('error')
+      setRunBlockReason(error?.message || 'Failed to trigger workspace run.')
     })
 
     notifyWidgetIframes({ action: 'run-app' })
@@ -144,27 +167,71 @@ const DaWorkspaceRuntimeControl: FC = () => {
   useEffect(() => {
     if (!prototypeIdForCoder || !isAuthorized || !accessToken) return
 
+    setRunStatus('connecting')
+    setWsReady(false)
+    setRunBlockReason('Connecting to runner websocket...')
+
     const wsBase = toWsBase(config.serverBaseUrl)
     const wsUrl = `${wsBase}/${config.serverVersion}/system/coder/workspace/${prototypeIdForCoder}/run-ws?access_token=${encodeURIComponent(accessToken)}`
     const ws = new WebSocket(wsUrl)
     wsRef.current = ws
 
+    ws.onopen = () => {
+      setWsReady(true)
+      setRunStatus('ready')
+      setRunBlockReason('')
+    }
+
+    ws.onerror = () => {
+      setWsReady(false)
+      setRunStatus('error')
+      setRunBlockReason('Runner websocket connection error.')
+    }
+
+    ws.onclose = () => {
+      setWsReady(false)
+      setRunStatus('connecting')
+      setRunBlockReason('Runner websocket disconnected. Reload to reconnect.')
+    }
+
     ws.onmessage = (event) => {
       try {
         const payload = JSON.parse(String(event.data))
         if (!payload || typeof payload !== 'object') return
+        if (payload.type === 'run.started') {
+          setRunStatus('running')
+          return
+        }
         if (payload.type === 'run.output') {
           const text = String(payload.data || '')
           if (!text) return
           setVscodeRunOutput((prev) => prev + text)
           setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + text)
           patchApisFromNdjsonContent(text, setActiveApis)
+          setRunStatus('running')
+          if (/[?:]\s*$/.test(text) || /\b(input|enter)\b/i.test(text)) {
+            setRunStatus('waiting_input')
+          }
+          return
+        }
+        if (payload.type === 'run.error') {
+          const message = String(payload.error || payload.data || 'Runner error')
+          const summary = `\n[run.error] ${message}\n`
+          setVscodeRunOutput((prev) => prev + summary)
+          setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
+          setRunStatus('error')
+          setRunBlockReason(message)
+          return
+        }
+        if (payload.type === 'run.waiting_input') {
+          setRunStatus('waiting_input')
           return
         }
         if (payload.type === 'run.exit') {
           const summary = `\n[run.exit] code=${payload.code} signal=${payload.signal || 'none'}\n`
           setVscodeRunOutput((prev) => prev + summary)
           setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
+          setRunStatus('exited')
         }
       } catch {
         // ignore malformed messages
@@ -247,7 +314,32 @@ const DaWorkspaceRuntimeControl: FC = () => {
       }),
     )
     setStdinLine('')
+    setRunStatus('running')
   }
+
+  const stopRun = () => {
+    const ws = wsRef.current
+    if (!ws || ws.readyState !== WebSocket.OPEN) return
+    ws.send(
+      JSON.stringify({
+        type: 'run.stop',
+      }),
+    )
+    setRunStatus('exited')
+  }
+
+  const canRun = Boolean(prototypeIdForCoder) && wsReady
+  const runDisabledReason = !prototypeIdForCoder
+    ? 'Prototype id is missing.'
+    : !wsReady
+      ? runBlockReason || 'Runner websocket is not ready.'
+      : ''
+
+  const canStop = wsReady && (runStatus === 'running' || runStatus === 'waiting_input')
+
+  const statusLabel = useMemo(() => {
+    return `status: ${runStatus}`
+  }, [runStatus])
 
   return (
     <div
@@ -284,13 +376,18 @@ const DaWorkspaceRuntimeControl: FC = () => {
                   <input
                     value={stdinLine}
                     placeholder="Send stdin line..."
-                    className="w-full rounded px-2 py-1 text-da-gray-dark text-sm"
+                    className="w-full rounded border border-slate-500 bg-slate-100 px-2 py-1 text-slate-900 text-sm placeholder:text-slate-500"
                     onChange={(e) => setStdinLine(e.target.value)}
                     onKeyDown={(e) => {
                       if (e.key === 'Enter') submitStdinLine()
                     }}
                   />
-                  <Button size="sm" onClick={submitStdinLine}>
+                  <Button
+                    size="sm"
+                    onClick={submitStdinLine}
+                    disabled={!wsReady || runStatus === 'error'}
+                    className="border border-sky-400 bg-sky-600 text-white hover:bg-sky-500"
+                  >
                     Send
                   </Button>
                 </div>
@@ -326,17 +423,18 @@ const DaWorkspaceRuntimeControl: FC = () => {
           <button
             type="button"
             data-id="btn-run-prototype-sidebar-lower"
-            disabled={!prototypeIdForCoder}
+            disabled={!canRun}
             onClick={handleCoderWorkspaceRun}
             className="flex items-center justify-center rounded border p-2 font-semibold text-sm"
+            title={runDisabledReason}
             style={{
-              color: prototypeIdForCoder
+              color: canRun
                 ? 'hsl(0, 0%, 100%)'
                 : 'hsl(215, 16%, 47%)',
               borderColor: 'hsl(215, 16%, 47%)',
             }}
             onMouseEnter={(e) => {
-              if (prototypeIdForCoder) {
+              if (canRun) {
                 e.currentTarget.style.backgroundColor = 'hsl(215, 16%, 47%)'
               }
             }}
@@ -346,6 +444,37 @@ const DaWorkspaceRuntimeControl: FC = () => {
           >
             <TbPlayerPlayFilled className="h-4 w-4" />
           </button>
+          <button
+            type="button"
+            data-id="btn-stop-prototype-sidebar-lower"
+            disabled={!canStop}
+            onClick={stopRun}
+            className="flex items-center justify-center rounded border p-2 font-semibold text-sm"
+            style={{
+              color: canStop ? 'hsl(0, 0%, 100%)' : 'hsl(215, 16%, 47%)',
+              borderColor: 'hsl(0, 84%, 60%)',
+              backgroundColor: canStop ? 'hsl(0, 72%, 40%)' : 'transparent',
+            }}
+            onMouseEnter={(e) => {
+              if (canStop) {
+                e.currentTarget.style.backgroundColor = 'hsl(0, 72%, 35%)'
+              }
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = canStop
+                ? 'hsl(0, 72%, 40%)'
+                : 'transparent'
+            }}
+            title={canStop ? 'Stop running process' : 'No active run to stop'}
+          >
+            <MdStop className="h-4 w-4" />
+          </button>
+          {isExpand && (
+            <div className="rounded bg-slate-800 px-2 py-1 text-xs text-slate-100">
+              {statusLabel}
+              {!canRun && runDisabledReason ? ` - ${runDisabledReason}` : ''}
+            </div>
+          )}
         </div>
 
         <div className="flex">

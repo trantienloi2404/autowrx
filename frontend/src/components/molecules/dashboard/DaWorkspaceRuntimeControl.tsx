@@ -25,8 +25,8 @@ import useSelfProfileQuery from '@/hooks/useSelfProfile'
 import useCurrentModel from '@/hooks/useCurrentModel'
 import usePermissionHook from '@/hooks/usePermissionHook'
 import { PERMISSIONS } from '@/data/permission'
-import DaApisWatch from './DaApisWatch'
-import PrototypeVarsWatch from './PrototypeVarsWatch'
+import DaWorkspaceApisWatch from './DaWorkspaceApisWatch'
+import WorkspacePrototypeVarsWatch from './WorkspacePrototypeVarsWatch'
 import { countCodeExecution } from '@/services/prototype.service'
 import { useSystemUI } from '@/hooks/useSystemUI'
 import { useParams } from 'react-router-dom'
@@ -160,7 +160,7 @@ const DaWorkspaceRuntimeControl: FC = () => {
     }
 
     void poll()
-    const id = window.setInterval(() => void poll(), 100)
+    const id = window.setInterval(() => void poll(), 1000)
     return () => {
       cancelled = true
       window.clearInterval(id)
@@ -256,7 +256,7 @@ const DaWorkspaceRuntimeControl: FC = () => {
             )}
 
             {activeTab === 'apis' && (
-              <DaApisWatch
+              <DaWorkspaceApisWatch
                 requestWriteSignalValue={(obj: Record<string, unknown>) => {
                   writeSignalValue(obj)
                 }}
@@ -264,7 +264,7 @@ const DaWorkspaceRuntimeControl: FC = () => {
             )}
 
             {activeTab === 'vars' && (
-              <PrototypeVarsWatch
+              <WorkspacePrototypeVarsWatch
                 requestWriteVarValue={(obj: Record<string, unknown>) => {
                   writeVarsValue(obj)
                 }}

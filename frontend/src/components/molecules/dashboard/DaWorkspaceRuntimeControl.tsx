@@ -17,7 +17,7 @@ import { TbPlayerPlayFilled } from 'react-icons/tb'
 import { FaAnglesLeft, FaAnglesRight } from 'react-icons/fa6'
 import { cn } from '@/lib/utils'
 import useModelStore from '@/stores/modelStore'
-import useRuntimeStore from '@/stores/runtimeStore'
+import useWorkspaceRuntimeStore from '@/stores/workspaceRuntimeStore'
 import { Prototype } from '@/types/model.type'
 import { shallow } from 'zustand/shallow'
 import { addLog } from '@/services/log.service'
@@ -65,7 +65,9 @@ function patchApisFromNdjsonContent(
   }
   if (Object.keys(patch).length === 0) return
   const prev =
-    (useRuntimeStore.getState().apisValue as Record<string, unknown> | undefined) ||
+    (useWorkspaceRuntimeStore.getState().apisValue as
+      | Record<string, unknown>
+      | undefined) ||
     {}
   setActiveApis({ ...prev, ...patch })
 }
@@ -83,11 +85,9 @@ const DaWorkspaceRuntimeControl: FC = () => {
   const [isAuthorized] = usePermissionHook([PERMISSIONS.READ_MODEL, model?.id])
   const { showPrototypeDashboardFullScreen } = useSystemUI()
 
-  const [setActiveApis, setTraceVars, setAppLog] = useRuntimeStore((state) => [
-    state.setActiveApis,
-    state.setTraceVars,
-    state.setAppLog,
-  ])
+  const [setActiveApis, setTraceVars, setAppLog] = useWorkspaceRuntimeStore(
+    (state) => [state.setActiveApis, state.setTraceVars, state.setAppLog],
+  )
 
   const [isExpand, setIsExpand] = useState(false)
   const [activeTab, setActiveTab] = useState<string>('output')
@@ -171,7 +171,10 @@ const DaWorkspaceRuntimeControl: FC = () => {
     (obj: Record<string, unknown> | null | undefined) => {
       if (!obj || typeof obj !== 'object') return
       const prev =
-        (useRuntimeStore.getState().apisValue as Record<string, unknown>) || {}
+        (useWorkspaceRuntimeStore.getState().apisValue as Record<
+          string,
+          unknown
+        >) || {}
       setActiveApis({ ...prev, ...obj })
     },
     [setActiveApis],
@@ -181,7 +184,10 @@ const DaWorkspaceRuntimeControl: FC = () => {
     (obj: Record<string, unknown> | null | undefined) => {
       if (!obj || typeof obj !== 'object') return
       const prev =
-        (useRuntimeStore.getState().traceVars as Record<string, unknown>) || {}
+        (useWorkspaceRuntimeStore.getState().traceVars as Record<
+          string,
+          unknown
+        >) || {}
       setTraceVars({ ...prev, ...obj })
     },
     [setTraceVars],

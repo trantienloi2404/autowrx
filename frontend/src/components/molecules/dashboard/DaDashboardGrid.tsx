@@ -7,7 +7,7 @@
 // SPDX-License-Identifier: MIT
 
 import { FC, useEffect, useState, useRef, useMemo } from 'react'
-import useRuntimeStore from '@/stores/runtimeStore'
+import useWorkspaceRuntimeStore from '@/stores/workspaceRuntimeStore'
 import { WidgetConfig } from '@/types/widget.type'
 import DaDialog from '@/components/molecules/DaDialog'
 import useCurrentModelApi from '@/hooks/useCurrentModelApi'
@@ -157,7 +157,7 @@ const DaDashboardGrid: FC<DaDashboardGridProps> = ({ widgetItems }) => {
   // Memoize VSS tree to prevent unnecessary re-renders with large data
   const memoizedVssTree = useMemo(() => cvi, [cvi])
 
-  const [apisValue, traceVars, appLog] = useRuntimeStore((state) => [
+  const [apisValue, traceVars, appLog] = useWorkspaceRuntimeStore((state) => [
     state.apisValue,
     state.traceVars,
     state.appLog,

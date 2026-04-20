@@ -41,6 +41,8 @@
   "markdown.validate.enabled": false,
 
   "git.autofetch": false,
+  "remote.autoForwardPorts": false,
+  "remote.restoreForwardedPorts": false,
   "search.followSymlinks": false,
   "files.autoSave": "onFocusChange",
   "files.watcherExclude": {

@@ -48,10 +48,18 @@ const attachCloseCleanup = (workspaceId, conn, collectionName) => {
   const channel = ensureChannel(workspaceId);
   const collection = channel[collectionName];
   const remove = () => {
+    const hadConn = collection.has(conn);
     try {
       collection.delete(conn);
     } catch {
       // ignore
+    }
+    if (collectionName === 'runners' && hadConn && channel.runners.size === 0) {
+      broadcastToWeb(workspaceId, {
+        type: 'runner.disconnected',
+        workspaceId: String(workspaceId),
+        at: nowIso(),
+      });
     }
     cleanupChannel(workspaceId);
   };
@@ -69,6 +77,11 @@ const registerRunner = (workspaceId, conn) => {
     workspaceId: String(workspaceId),
     at: nowIso(),
   });
+  broadcastToWeb(workspaceId, {
+    type: 'runner.connected',
+    workspaceId: String(workspaceId),
+    at: nowIso(),
+  });
 
   logger.info(`[workspace-run-ws] runner registered workspace=${workspaceId}`);
 };
@@ -77,6 +90,11 @@ const registerWeb = (workspaceId, conn) => {
   const channel = ensureChannel(workspaceId);
   channel.webs.add(conn);
   attachCloseCleanup(workspaceId, conn, 'webs');
+  safeSend(conn, {
+    type: channel.runners.size > 0 ? 'runner.connected' : 'runner.disconnected',
+    workspaceId: String(workspaceId),
+    at: nowIso(),
+  });
   logger.info(`[workspace-run-ws] web registered workspace=${workspaceId}`);
 };
 

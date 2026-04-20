@@ -3,6 +3,8 @@ const WebSocket = require('ws');
 
 const TERMINAL_NAME = 'AutoWRX Console';
 const RUNNER_RECONNECT_MS = 3000;
+const SHELL_INTEGRATION_WAIT_MS = 150;
+const SHELL_INTEGRATION_MAX_ATTEMPTS = 20;
 
 function activate(context) {
     console.log('AutoWRX runner extension is active');
@@ -113,7 +115,7 @@ class RunnerBridge {
         if (!payload || typeof payload !== 'object') return;
         switch (payload.type) {
             case 'run.start':
-                this.startRun(payload.runKind, payload.command);
+                void this.startRun(payload.runKind, payload.command);
                 break;
             case 'run.stdin':
                 this.writeStdin(payload.data);
@@ -126,7 +128,7 @@ class RunnerBridge {
         }
     }
 
-    startRun(runKind, command) {
+    async startRun(runKind, command) {
         if (!command || typeof command !== 'string') return;
         const terminal = this.ensureTerminal();
         terminal.show(true);
@@ -137,7 +139,7 @@ class RunnerBridge {
             at: new Date().toISOString(),
         });
 
-        const integration = terminal.shellIntegration;
+        const integration = await this.waitForShellIntegration(terminal);
         if (integration && typeof integration.executeCommand === 'function') {
             try {
                 const execution = integration.executeCommand(command);
@@ -153,8 +155,25 @@ class RunnerBridge {
             }
         }
 
-        // Fallback when shell integration is unavailable: still run visibly in terminal.
+        this.send({
+            type: 'run.error',
+            message: 'shellIntegration unavailable; output stream may be incomplete for this run',
+            at: new Date().toISOString(),
+        });
+        // Last-resort fallback when shell integration is unavailable.
         terminal.sendText(command, true);
+    }
+
+    async waitForShellIntegration(terminal) {
+        for (let i = 0; i < SHELL_INTEGRATION_MAX_ATTEMPTS; i += 1) {
+            if (terminal !== this.outputTerminal) return null;
+            const integration = terminal.shellIntegration;
+            if (integration && typeof integration.executeCommand === 'function') {
+                return integration;
+            }
+            await new Promise((resolve) => setTimeout(resolve, SHELL_INTEGRATION_WAIT_MS));
+        }
+        return null;
     }
 
     writeStdin(data) {

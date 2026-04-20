@@ -107,8 +107,11 @@ const DaWorkspaceRuntimeControl: FC = () => {
   const [stdinLine, setStdinLine] = useState('')
   const [runStatus, setRunStatus] = useState<WorkspaceRunUiStatus>('connecting')
   const [wsReady, setWsReady] = useState(false)
+  const [runnerReady, setRunnerReady] = useState(false)
   const [runBlockReason, setRunBlockReason] = useState('')
   const wsRef = useRef<WebSocket | null>(null)
+  const reconnectTimerRef = useRef<number | null>(null)
+  const shouldReconnectRef = useRef(false)
 
   const prototypeIdForCoder = prototype?.id ?? routePrototypeId ?? ''
 
@@ -127,9 +130,18 @@ const DaWorkspaceRuntimeControl: FC = () => {
       )
       return
     }
+    if (!runnerReady) {
+      setRunStatus('connecting')
+      setRunBlockReason(
+        'AutoWRX Runner extension is not ready yet. Open VSCode workspace and wait for runner.connected.',
+      )
+      return
+    }
     setActiveTab('output')
     setRunStatus('running')
     setRunBlockReason('')
+    setVscodeRunOutput('')
+    setAppLog('')
     void triggerWorkspaceRun(id).catch((error) => {
       console.error('[DaWorkspaceRuntimeControl] Coder trigger-run failed:', error)
       setRunStatus('error')
@@ -167,84 +179,117 @@ const DaWorkspaceRuntimeControl: FC = () => {
   useEffect(() => {
     if (!prototypeIdForCoder || !isAuthorized || !accessToken) return
 
+    shouldReconnectRef.current = true
     setRunStatus('connecting')
     setWsReady(false)
+    setRunnerReady(false)
     setRunBlockReason('Connecting to runner websocket...')
 
     const wsBase = toWsBase(config.serverBaseUrl)
     const wsUrl = `${wsBase}/${config.serverVersion}/system/coder/workspace/${prototypeIdForCoder}/run-ws?access_token=${encodeURIComponent(accessToken)}`
-    const ws = new WebSocket(wsUrl)
-    wsRef.current = ws
+    const connectWs = () => {
+      if (!shouldReconnectRef.current) return
+      const ws = new WebSocket(wsUrl)
+      wsRef.current = ws
 
-    ws.onopen = () => {
-      setWsReady(true)
-      setRunStatus('ready')
-      setRunBlockReason('')
-    }
+      ws.onopen = () => {
+        setWsReady(true)
+        setRunStatus('connecting')
+        setRunBlockReason('Waiting for AutoWRX Runner extension...')
+      }
 
-    ws.onerror = () => {
-      setWsReady(false)
-      setRunStatus('error')
-      setRunBlockReason('Runner websocket connection error.')
-    }
+      ws.onerror = () => {
+        setWsReady(false)
+      }
 
-    ws.onclose = () => {
-      setWsReady(false)
-      setRunStatus('connecting')
-      setRunBlockReason('Runner websocket disconnected. Reload to reconnect.')
-    }
+      ws.onclose = () => {
+        setWsReady(false)
+        setRunnerReady(false)
+        setRunStatus('connecting')
+        setRunBlockReason('Runner websocket disconnected. Reconnecting...')
+        if (!shouldReconnectRef.current) return
+        if (reconnectTimerRef.current) window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = window.setTimeout(() => {
+          reconnectTimerRef.current = null
+          connectWs()
+        }, 1200)
+      }
 
-    ws.onmessage = (event) => {
-      try {
-        const payload = JSON.parse(String(event.data))
-        if (!payload || typeof payload !== 'object') return
-        if (payload.type === 'run.started') {
-          setRunStatus('running')
-          return
-        }
-        if (payload.type === 'run.output') {
-          const text = String(payload.data || '')
-          if (!text) return
-          setVscodeRunOutput((prev) => prev + text)
-          setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + text)
-          patchApisFromNdjsonContent(text, setActiveApis)
-          setRunStatus('running')
-          if (/[?:]\s*$/.test(text) || /\b(input|enter)\b/i.test(text)) {
-            setRunStatus('waiting_input')
+      ws.onmessage = (event) => {
+        try {
+          const payload = JSON.parse(String(event.data))
+          if (!payload || typeof payload !== 'object') return
+          if (payload.type === 'runner.connected') {
+            setRunnerReady(true)
+            setRunStatus('ready')
+            setRunBlockReason('')
+            return
           }
-          return
+          if (payload.type === 'runner.disconnected') {
+            setRunnerReady(false)
+            setRunStatus('connecting')
+            setRunBlockReason(
+              'AutoWRX Runner extension is offline. Waiting for reconnect...',
+            )
+            return
+          }
+          if (payload.type === 'run.started') {
+            setRunStatus('running')
+            return
+          }
+          if (payload.type === 'run.output') {
+            const text = String(payload.data || '')
+            if (!text) return
+            setVscodeRunOutput((prev) => prev + text)
+            setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + text)
+            patchApisFromNdjsonContent(text, setActiveApis)
+            setRunStatus('running')
+            if (/[?:]\s*$/.test(text) || /\b(input|enter)\b/i.test(text)) {
+              setRunStatus('waiting_input')
+            }
+            return
+          }
+          if (payload.type === 'run.error') {
+            const message = String(
+              payload.message || payload.error || payload.data || 'Runner error',
+            )
+            const summary = `\n[run.error] ${message}\n`
+            setVscodeRunOutput((prev) => prev + summary)
+            setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
+            setRunStatus('error')
+            setRunBlockReason(message)
+            return
+          }
+          if (payload.type === 'run.waiting_input') {
+            setRunStatus('waiting_input')
+            return
+          }
+          if (payload.type === 'run.exit') {
+            const summary = `\n[run.exit] code=${payload.code} signal=${payload.signal || 'none'}\n`
+            setVscodeRunOutput((prev) => prev + summary)
+            setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
+            setRunStatus('exited')
+          }
+        } catch {
+          // ignore malformed messages
         }
-        if (payload.type === 'run.error') {
-          const message = String(payload.error || payload.data || 'Runner error')
-          const summary = `\n[run.error] ${message}\n`
-          setVscodeRunOutput((prev) => prev + summary)
-          setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
-          setRunStatus('error')
-          setRunBlockReason(message)
-          return
-        }
-        if (payload.type === 'run.waiting_input') {
-          setRunStatus('waiting_input')
-          return
-        }
-        if (payload.type === 'run.exit') {
-          const summary = `\n[run.exit] code=${payload.code} signal=${payload.signal || 'none'}\n`
-          setVscodeRunOutput((prev) => prev + summary)
-          setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + summary)
-          setRunStatus('exited')
-        }
-      } catch {
-        // ignore malformed messages
       }
     }
 
+    connectWs()
+
     return () => {
+      shouldReconnectRef.current = false
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current)
+        reconnectTimerRef.current = null
+      }
       try {
-        ws.close(1000, 'unmount')
+        wsRef.current?.close(1000, 'unmount')
       } catch {
         // ignore
       }
-      if (wsRef.current === ws) wsRef.current = null
+      wsRef.current = null
     }
   }, [prototypeIdForCoder, isAuthorized, accessToken, setActiveApis, setAppLog])
 
@@ -328,11 +373,13 @@ const DaWorkspaceRuntimeControl: FC = () => {
     setRunStatus('exited')
   }
 
-  const canRun = Boolean(prototypeIdForCoder) && wsReady
+  const canRun = Boolean(prototypeIdForCoder) && wsReady && runnerReady
   const runDisabledReason = !prototypeIdForCoder
     ? 'Prototype id is missing.'
     : !wsReady
       ? runBlockReason || 'Runner websocket is not ready.'
+      : !runnerReady
+        ? runBlockReason || 'AutoWRX Runner extension is not ready.'
       : ''
 
   const canStop = wsReady && (runStatus === 'running' || runStatus === 'waiting_input')

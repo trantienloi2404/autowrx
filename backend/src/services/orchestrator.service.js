@@ -11,12 +11,10 @@ const path = require('path');
 const httpStatus = require('http-status');
 const coderService = require('./coder.service');
 const workspaceBindingService = require('./workspaceBinding.service');
-const permissionService = require('./permission.service');
 const { Prototype, User } = require('../models');
 const logger = require('../config/logger');
 const ApiError = require('../utils/ApiError');
 const coderConfig = require('../utils/coderConfig');
-const { PERMISSIONS } = require('../config/roles');
 const { getPrototypeFolderRelativePath } = require('../utils/prototypePath');
 const workspaceRunWsHub = require('./workspaceRunWsHub.service');
 const {
@@ -306,11 +304,10 @@ const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
 
 /** Server-side only: maps client runKind to shell command (never accept raw command from client). */
 const RUN_KIND_COMMANDS = {
-  // -u: unbuffered stdout so tee sees lines immediately; tee copies to terminal and .autowrx_out
-  'python-main': 'python3 -u main.py 2>&1 | tee .autowrx_out',
-  'c-main': 'gcc main.c -o main && ./main 2>&1 | tee .autowrx_out',
-  'cpp-main': 'g++ -o main -Iinclude src/*.cpp && ./main 2>&1 | tee .autowrx_out',
-  'rust-main': 'cargo run 2>&1 | tee .autowrx_out',
+  'python-main': 'python3 -u main.py',
+  'c-main': 'gcc main.c -o main && ./main',
+  'cpp-main': 'g++ -o main -Iinclude src/*.cpp && ./main',
+  'rust-main': 'cargo run',
 };
 
 const resolveRunCommand = (runKind) => {

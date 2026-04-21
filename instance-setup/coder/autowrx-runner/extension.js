@@ -195,6 +195,12 @@ class RunnerBridge {
         const closed = vscode.window.onDidCloseTerminal((terminal) => {
             if (terminal !== this.outputTerminal) return;
             this.log('[AutoWRX Runner] terminal closed by user');
+            this.send({
+                type: 'run.exit',
+                code: null,
+                signal: 'terminal_closed',
+                at: new Date().toISOString(),
+            });
             this.outputTerminal = null;
             this.activeExecution = null;
         });

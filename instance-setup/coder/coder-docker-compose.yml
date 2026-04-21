@@ -1,4 +1,16 @@
 services:
+  redis:
+    image: redis:8.4.2-alpine
+    container_name: coder_redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - coder_redis_data:/data
+    restart: unless-stopped
+    networks:
+      - coder_network
+
   coder:
     image: ghcr.io/coder/coder:v2.31.9
     container_name: coder
@@ -52,6 +64,7 @@ services:
 volumes:
   coder_data:
   coder_terraform_plugins:
+  coder_redis_data:
 
 networks:
   coder_network:

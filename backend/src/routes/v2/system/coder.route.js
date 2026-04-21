@@ -31,6 +31,10 @@ router
   .get(auth(), validate(coderValidation.getRunOutput), coderController.getRunOutput);
 
 router
+  .route('/workspace/:prototypeId/runtime-state')
+  .get(auth(), validate(coderValidation.getRuntimeState), coderController.getRuntimeState);
+
+router
   .route('/workspaces/me')
   .get(auth(), coderController.listMyWorkspaces);
 

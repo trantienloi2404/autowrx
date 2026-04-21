@@ -54,11 +54,28 @@ export interface WorkspaceRunOutput {
   mtimeMs: number
 }
 
+export interface WorkspaceRuntimeStateSnapshot {
+  apisValue: Record<string, unknown>
+  traceVars: Record<string, unknown>
+  appLog: string
+  status: string
+  updatedAt: string
+}
+
 export const getWorkspaceRunOutput = async (
   prototypeId: string,
 ): Promise<WorkspaceRunOutput> => {
   const response = await serverAxios.get<WorkspaceRunOutput>(
     `/system/coder/workspace/${prototypeId}/run-output`,
+  )
+  return response.data
+}
+
+export const getWorkspaceRuntimeState = async (
+  prototypeId: string,
+): Promise<WorkspaceRuntimeStateSnapshot> => {
+  const response = await serverAxios.get<WorkspaceRuntimeStateSnapshot>(
+    `/system/coder/workspace/${prototypeId}/runtime-state`,
   )
   return response.data
 }

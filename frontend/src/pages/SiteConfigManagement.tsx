@@ -295,6 +295,15 @@ export const PREDEFINED_SITE_CONFIGS: any[] = [
       'Host path for prototypes folder (bind-mount into Coder workspace)',
     category: 'vscode',
   },
+  {
+    key: 'REDIS_URL',
+    scope: 'site',
+    value: 'redis://localhost:6379',
+    secret: false,
+    valueType: 'string',
+    description: 'Redis URL used by VSCode workspace runtime state storage.',
+    category: 'vscode',
+  },
 ]
 
 export const PREDEFINED_GENAI_CONFIG_KEYS: string[] =

@@ -23,6 +23,7 @@ const workspaceBindingService = require('../services/workspaceBinding.service');
 const { PERMISSIONS } = require('./roles');
 const { resolveWorkspaceKindFromPrototype } = require('../utils/workspaceKind');
 const workspaceRunWsHub = require('../services/workspaceRunWsHub.service');
+const workspaceRuntimeStateService = require('../services/workspaceRuntimeState.service');
 
 const getCoderApiBase = () => {
   const coderCfg = coderConfig.getCoderConfigSync();
@@ -248,6 +249,7 @@ const init = (httpServer) => {
             if (!raw) return;
             const payload = JSON.parse(raw);
             workspaceRunWsHub.broadcastToWeb(workspaceId, payload);
+            void workspaceRuntimeStateService.ingestRunnerPayload(workspaceId, payload);
           } catch (error) {
             logger.warn(`[workspace-run-ws] runner message parse failed: ${error?.message || error}`);
           }

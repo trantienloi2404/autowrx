@@ -7,6 +7,7 @@ const KEYS = {
   coderUrl: 'CODER_URL',
   coderAdminApiKey: 'CODER_ADMIN_API_KEY',
   prototypesPath: 'PROTOTYPES_PATH',
+  redisUrl: 'REDIS_URL',
 };
 
 // Hard-coded defaults (NO .env reading for Coder integration)
@@ -15,6 +16,7 @@ const DEFAULTS = {
   coderUrl: 'http://localhost:7080',
   adminApiKey: '',
   prototypesPath: '/opt/autowrx/prototypes',
+  redisUrl: 'redis://localhost:6379',
 };
 
 const CACHE_DURATION_MS = 10 * 1000; // refresh at most every 10s
@@ -32,12 +34,14 @@ const normalizeConfig = (values) => {
   const coderUrl = values[KEYS.coderUrl] ?? DEFAULTS.coderUrl;
   const adminApiKey = values[KEYS.coderAdminApiKey] ?? DEFAULTS.adminApiKey;
   const prototypesPath = values[KEYS.prototypesPath] ?? DEFAULTS.prototypesPath;
+  const redisUrl = values[KEYS.redisUrl] ?? DEFAULTS.redisUrl;
 
   return {
     enabled: Boolean(enabled),
     coderUrl: String(coderUrl),
     adminApiKey: String(adminApiKey),
     prototypesPath: String(prototypesPath),
+    redisUrl: String(redisUrl || ''),
   };
 };
 

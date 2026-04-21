@@ -406,11 +406,16 @@ const getOrCreateWorkspace = async (
       return existingWorkspace;
     }
 
-    // Create new workspace - pass prototypes_host_path from config
+    const coderCfg = coderConfig.getCoderConfigSync();
+    // Create new workspace - pass Coder template rich parameters from site config.
     const richParameterValues = [
       {
         name: 'prototypes_host_path',
-        value: prototypesHostPath || coderConfig.getCoderConfigSync().prototypesPath || '/opt/autowrx/prototypes',
+        value: prototypesHostPath || coderCfg.prototypesPath || '/opt/autowrx/prototypes',
+      },
+      {
+        name: 'redis_url',
+        value: coderCfg.redisUrl || '',
       },
     ];
 

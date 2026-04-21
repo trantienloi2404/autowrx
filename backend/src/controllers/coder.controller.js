@@ -15,6 +15,7 @@ const { Prototype, User } = require('../models');
 const coderConfig = require('../utils/coderConfig');
 const { sanitizePrototypeFolderName, getPrototypeModelId } = require('../utils/prototypePath');
 const { resolveWorkspaceKindFromPrototype } = require('../utils/workspaceKind');
+const workspaceRuntimeStateService = require('../services/workspaceRuntimeState.service');
 
 const CODER_SESSION_COOKIE = 'coder_session_token';
 const CODER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -237,6 +238,36 @@ const getRunOutput = catchAsync(async (req, res) => {
   res.json(payload);
 });
 
+const getRuntimeState = catchAsync(async (req, res) => {
+  const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
+  if (!coderCfg.enabled) {
+    throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
+  }
+
+  const { prototypeId } = req.params;
+  const userId = req.user.id;
+
+  const prototype = await Prototype.findById(prototypeId);
+  if (!prototype) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Prototype not found');
+  }
+
+  const hasPermission = await permissionService.hasPermission(userId, PERMISSIONS.READ_MODEL, prototype.model_id);
+  if (!hasPermission) {
+    throw new ApiError(httpStatus.FORBIDDEN, 'You do not have permission to access this prototype');
+  }
+
+  const user = await User.findById(userId);
+  const workspaceKind = resolveWorkspaceKindFromPrototype(prototype);
+  const workspaceId = await workspaceBindingService.getWorkspaceIdForUser(user, workspaceKind);
+  if (!workspaceId) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Workspace not found. Prepare workspace first.');
+  }
+
+  const payload = await workspaceRuntimeStateService.getRuntimeStateSnapshot(workspaceId);
+  res.json(payload);
+});
+
 /**
  * List workspaces for current user.
  */
@@ -370,6 +401,7 @@ module.exports = {
   prepareWorkspace,
   triggerRun,
   getRunOutput,
+  getRuntimeState,
   listMyWorkspaces,
   listAdminWorkspaces,
   startMyWorkspace,

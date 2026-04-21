@@ -16,7 +16,10 @@ import usePermissionHook from '@/hooks/usePermissionHook'
 import useSelfProfileQuery from '@/hooks/useSelfProfile'
 import { addLog } from '@/services/log.service'
 import { countCodeExecution } from '@/services/prototype.service'
-import { triggerWorkspaceRun } from '@/services/coder.service'
+import {
+  getWorkspaceRuntimeState,
+  triggerWorkspaceRun,
+} from '@/services/coder.service'
 import useAuthStore from '@/stores/authStore'
 import useModelStore from '@/stores/modelStore'
 import useWorkspaceRuntimeStore from '@/stores/workspaceRuntimeStore'
@@ -277,6 +280,27 @@ export default function useWorkspaceRuntimeControl() {
         setWsReady(true)
         setRunStatus('connecting')
         setRunBlockReason('Waiting for AutoWRX Runner extension...')
+        void getWorkspaceRuntimeState(prototypeIdForCoder)
+          .then((snapshot) => {
+            const apisValue =
+              snapshot?.apisValue && typeof snapshot.apisValue === 'object'
+                ? snapshot.apisValue
+                : {}
+            const traceVars =
+              snapshot?.traceVars && typeof snapshot.traceVars === 'object'
+                ? snapshot.traceVars
+                : {}
+            const appLog = String(snapshot?.appLog || '')
+            setActiveApis(apisValue)
+            setTraceVars(traceVars)
+            setAppLog(appLog)
+            if (appLog) {
+              setVscodeRunOutput(appLog)
+            }
+          })
+          .catch(() => {
+            // best-effort snapshot hydrate
+          })
       }
 
       ws.onerror = () => {
@@ -373,6 +397,9 @@ export default function useWorkspaceRuntimeControl() {
     isAuthorized,
     isVsCodeIframeLoaded,
     prototypeIdForCoder,
+    setActiveApis,
+    setAppLog,
+    setTraceVars,
   ])
 
   const outputPanelText = useMemo(() => {

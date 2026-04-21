@@ -3,6 +3,7 @@ import { useParams } from 'react-router-dom'
 import usePermissionHook from '@/hooks/usePermissionHook'
 import useCurrentModel from '@/hooks/useCurrentModel'
 import useAuthStore from '@/stores/authStore'
+import useWorkspaceRuntimeUiStore from '@/stores/workspaceRuntimeUiStore'
 import { PERMISSIONS } from '@/data/permission'
 import config from '@/configs/config'
 import {
@@ -147,6 +148,9 @@ export default function usePrototypeTabVSCodeWorkspace(isActive: boolean) {
   const { data: model } = useCurrentModel()
   const [isAuthorized] = usePermissionHook([PERMISSIONS.READ_MODEL, model?.id])
   const accessToken = useAuthStore((state) => state.access?.token)
+  const setIframeLoadedForRuntime = useWorkspaceRuntimeUiStore(
+    (state) => state.setIframeLoaded,
+  )
 
   const lastResolvedBuildIdRef = useRef<string | null>(null)
   const watchSocketRef = useRef<WebSocket | null>(null)
@@ -349,6 +353,18 @@ export default function usePrototypeTabVSCodeWorkspace(isActive: boolean) {
       message: watchBuildSnapshot.failureMessage || 'Workspace build failed',
     })
   }, [state.hasActivatedOnce, watchBuildSnapshot.isFailed, watchBuildSnapshot.failureMessage])
+
+  useEffect(() => {
+    if (!prototype_id) return
+    setIframeLoadedForRuntime(prototype_id, state.isIframeLoaded)
+  }, [prototype_id, setIframeLoadedForRuntime, state.isIframeLoaded])
+
+  useEffect(() => {
+    if (!prototype_id) return
+    return () => {
+      setIframeLoadedForRuntime(prototype_id, false)
+    }
+  }, [prototype_id, setIframeLoadedForRuntime])
 
   useEffect(() => {
     if (!state.isIframeLoaded) return

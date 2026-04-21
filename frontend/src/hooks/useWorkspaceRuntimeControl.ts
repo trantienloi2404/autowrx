@@ -20,6 +20,7 @@ import { triggerWorkspaceRun } from '@/services/coder.service'
 import useAuthStore from '@/stores/authStore'
 import useModelStore from '@/stores/modelStore'
 import useWorkspaceRuntimeStore from '@/stores/workspaceRuntimeStore'
+import useWorkspaceRuntimeUiStore from '@/stores/workspaceRuntimeUiStore'
 import { Prototype } from '@/types/model.type'
 import { useSystemUI } from '@/hooks/useSystemUI'
 
@@ -105,6 +106,12 @@ export default function useWorkspaceRuntimeControl() {
   const shouldReconnectRef = useRef(false)
 
   const prototypeIdForCoder = prototype?.id ?? routePrototypeId ?? ''
+  const isVsCodeIframeLoaded = useWorkspaceRuntimeUiStore(
+    (state) =>
+      prototypeIdForCoder
+        ? Boolean(state.iframeLoadedByPrototypeId[prototypeIdForCoder])
+        : false,
+  )
 
   const appendRuntimeText = useCallback(
     (text: string) => {
@@ -244,6 +251,13 @@ export default function useWorkspaceRuntimeControl() {
 
   useEffect(() => {
     if (!prototypeIdForCoder || !isAuthorized || !accessToken) return
+    if (!isVsCodeIframeLoaded) {
+      setRunStatus('connecting')
+      setWsReady(false)
+      setRunnerReady(false)
+      setRunBlockReason('Waiting for VSCode iframe to load...')
+      return
+    }
 
     shouldReconnectRef.current = true
     setRunStatus('connecting')
@@ -296,9 +310,7 @@ export default function useWorkspaceRuntimeControl() {
             case 'runner.disconnected':
               setRunnerReady(false)
               setRunStatus('connecting')
-              setRunBlockReason(
-                'AutoWRX Runner extension is offline. Waiting for reconnect...',
-              )
+              setRunBlockReason('connecting...')
               return
             case 'run.started':
               setRunStatus('running')
@@ -355,7 +367,13 @@ export default function useWorkspaceRuntimeControl() {
       }
       wsRef.current = null
     }
-  }, [accessToken, appendRuntimeText, isAuthorized, prototypeIdForCoder])
+  }, [
+    accessToken,
+    appendRuntimeText,
+    isAuthorized,
+    isVsCodeIframeLoaded,
+    prototypeIdForCoder,
+  ])
 
   const outputPanelText = useMemo(() => {
     const placeholder =
@@ -364,7 +382,10 @@ export default function useWorkspaceRuntimeControl() {
     return vscodeRunOutput
   }, [vscodeRunOutput])
 
-  const canRun = Boolean(prototypeIdForCoder) && wsReady && runnerReady
+  const isRunInProgress =
+    runStatus === 'running' || runStatus === 'waiting_input'
+  const canRun =
+    Boolean(prototypeIdForCoder) && wsReady && runnerReady && !isRunInProgress
   const runDisabledReason = !prototypeIdForCoder
     ? 'Prototype id is missing.'
     : !wsReady

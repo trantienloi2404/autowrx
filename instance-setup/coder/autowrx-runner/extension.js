@@ -9,6 +9,7 @@ const LOCAL_FALLBACK_RUNNER_WS_URL = 'ws://127.0.0.1:3200/v2/system/coder/runner
 
 function activate(context) {
     console.log('AutoWRX runner extension is active');
+    closeAllTerminalsForFreshSession();
 
     const runner = new RunnerBridge();
     runner.start();
@@ -20,6 +21,24 @@ function activate(context) {
     context.subscriptions.push(disposableCmd, {
         dispose: () => runner.dispose(),
     });
+}
+
+function closeAllTerminalsForFreshSession() {
+    try {
+        const terminals = vscode.window.terminals || [];
+        terminals.forEach((terminal) => {
+            try {
+                terminal.dispose();
+            } catch (error) {
+                console.log(`[AutoWRX Runner] failed to close terminal: ${error?.message || error}`);
+            }
+        });
+        if (terminals.length > 0) {
+            console.log(`[AutoWRX Runner] closed ${terminals.length} existing terminal(s) for fresh session`);
+        }
+    } catch (error) {
+        console.log(`[AutoWRX Runner] closeAllTerminalsForFreshSession failed: ${error?.message || error}`);
+    }
 }
 
 class RunnerBridge {

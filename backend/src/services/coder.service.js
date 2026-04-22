@@ -47,6 +47,15 @@ const normalizeIdForName = (value) =>
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
 
+const extractWorkspaceOwnerUsername = (workspace) => {
+  const rawOwner = workspace?.owner;
+  const ownerFromObject =
+    rawOwner && typeof rawOwner === 'object'
+      ? (rawOwner.username || rawOwner.name || rawOwner.id)
+      : null;
+  return String(workspace?.owner_name || ownerFromObject || workspace?.owner_id || rawOwner || '').trim();
+};
+
 const assertUserScopedPrototypePath = (prototypesHostPath, expectedUserHostPath) => {
   const rawInput = String(prototypesHostPath || '').trim();
   const rawExpected = String(expectedUserHostPath || '').trim();
@@ -285,7 +294,7 @@ const ensureUserExists = async (userId, username, email) => {
     if (error.response?.status === 409) {
       logger.info(`Coder user creation conflict for ${username}, fetching existing user by email...`);
       try {
-        const usersResponse = await axios.get(`${CODER_API_BASE}/users`, {
+        const usersResponse = await axios.get(`${getCoderApiBase()}/users`, {
           headers: getAdminHeaders(),
           params: { q: email },
         });
@@ -695,11 +704,26 @@ const deleteWorkspace = async (workspaceId, sessionToken = null) => {
  */
 const listAllWorkspacesAdmin = async () => {
   try {
-    const response = await axios.get(`${getCoderApiBase()}/workspaces`, {
-      headers: getAdminHeaders(),
-      params: { limit: 200 },
-    });
-    return extractCollection(response.data, 'workspaces');
+    const headers = getAdminHeaders();
+    const pageSize = 200;
+    const all = [];
+    let offset = 0;
+
+    // Coder API can paginate workspace lists; fetch all pages for admin management views.
+    while (true) {
+      const response = await axios.get(`${getCoderApiBase()}/workspaces`, {
+        headers,
+        params: { limit: pageSize, offset },
+      });
+      const page = extractCollection(response.data, 'workspaces');
+      all.push(...page);
+      if (page.length < pageSize) {
+        break;
+      }
+      offset += pageSize;
+    }
+
+    return all;
   } catch (error) {
     logger.error(`Failed to list all Coder workspaces: ${error.message}`);
     if (error.response) {
@@ -928,7 +952,7 @@ const getWorkspaceAppUrl = async (
       }
 
       // Construct URL (we can construct it even if app isn't in the response yet)
-      const username = workspace.owner_name || workspace.owner || workspace.owner_id;
+      const username = extractWorkspaceOwnerUsername(workspace);
       const workspaceName = workspace.name;
       const agentName = agent.name || 'main';
 

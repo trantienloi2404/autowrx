@@ -71,20 +71,22 @@ const extractWorkspaceOwnerUsername = (workspace) =>
 
 const mapWorkspacesForResponse = async (workspaces, sessionToken, ownerEmailByCoderUsername = new Map()) => {
   return Promise.all(workspaces.map(async (workspace) => {
-    let appUrl = null;
-    try {
-      appUrl = await coderService.getWorkspaceAppUrl(
-        workspace.id,
-        'code-server',
-        1,
-        0,
-        sessionToken,
-      );
-    } catch {
-      appUrl =
-        workspace?.latest_app_status?.uri ||
-        workspace?.latest_app_status?.url ||
-        null;
+    let appUrl =
+      workspace?.latest_app_status?.uri ||
+      workspace?.latest_app_status?.url ||
+      null;
+    if (!appUrl) {
+      try {
+        appUrl = await coderService.getWorkspaceAppUrl(
+          workspace.id,
+          'code-server',
+          1,
+          0,
+          sessionToken,
+        );
+      } catch {
+        appUrl = null;
+      }
     }
 
     const ownerUsername = extractWorkspaceOwnerUsername(workspace);

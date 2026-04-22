@@ -30,12 +30,6 @@ const triggerRun = {
   }),
 };
 
-const getRunOutput = {
-  params: Joi.object().keys({
-    prototypeId: Joi.string().custom(objectId).required(),
-  }),
-};
-
 const getRuntimeState = {
   params: Joi.object().keys({
     prototypeId: Joi.string().custom(objectId).required(),
@@ -52,7 +46,6 @@ module.exports = {
   getWorkspace,
   prepareWorkspace,
   triggerRun,
-  getRunOutput,
   getRuntimeState,
   manageWorkspaceById,
 };

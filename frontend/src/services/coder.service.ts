@@ -48,27 +48,12 @@ export const triggerWorkspaceRun = async (prototypeId: string): Promise<void> =>
   await serverAxios.post(`/system/coder/workspace/${prototypeId}/trigger-run`, {})
 }
 
-/** Body of `.autowrx_out` on the prototypes volume (`mtimeMs` for cheap change detection). */
-export interface WorkspaceRunOutput {
-  content: string
-  mtimeMs: number
-}
-
 export interface WorkspaceRuntimeStateSnapshot {
   apisValue: Record<string, unknown>
   traceVars: Record<string, unknown>
   appLog: string
   status: string
   updatedAt: string
-}
-
-export const getWorkspaceRunOutput = async (
-  prototypeId: string,
-): Promise<WorkspaceRunOutput> => {
-  const response = await serverAxios.get<WorkspaceRunOutput>(
-    `/system/coder/workspace/${prototypeId}/run-output`,
-  )
-  return response.data
 }
 
 export const getWorkspaceRuntimeState = async (

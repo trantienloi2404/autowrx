@@ -347,8 +347,7 @@ const buildRunCommandForPrototype = (prototype) => {
 };
 
 /**
- * Write `.autowrx_run` on the host prototypes volume so the VS Code extension in the
- * Coder workspace (same mount) can pick it up via FileSystemWatcher.
+ * Send run command to workspace runner over WebSocket hub.
  * @param {string} userId
  * @param {import('mongoose').Document} prototype - Prototype document (already authorized)
  * @param {string} runKind - key in RUN_KIND_COMMANDS
@@ -390,51 +389,9 @@ const triggerRunForPrototype = async (userId, prototype, runKind) => {
   logger.info(`Sent run.start to runner(s) for workspace=${workspaceId}, prototype=${prototype.id}`);
 };
 
-const MAX_RUN_OUTPUT_BYTES = 512 * 1024;
-
-/**
- * Read `.autowrx_out` from the host prototypes folder (same bind-mount as the Coder workspace).
- * @returns {{ content: string, mtimeMs: number }}
- */
-const getRunOutputForPrototype = async (userId, prototype) => {
-  const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
-  if (!coderCfg.enabled) {
-    throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
-  }
-
-  const { prototypesPath } = coderCfg;
-  if (!prototypesPath) {
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Prototypes path is not configured');
-  }
-
-  const prototypeFolderRelativePath = getPrototypeFolderRelativePath(prototype);
-  const userHostPath = path.join(prototypesPath, userId.toString());
-  const prototypeFolderHost = path.join(userHostPath, prototypeFolderRelativePath);
-  const outPath = path.join(prototypeFolderHost, '.autowrx_out');
-
-  if (!fs.existsSync(outPath)) {
-    return { content: '', mtimeMs: 0 };
-  }
-
-  const stat = fs.statSync(outPath);
-  const buf = fs.readFileSync(outPath);
-  let body = buf;
-  let prefix = '';
-  if (buf.length > MAX_RUN_OUTPUT_BYTES) {
-    body = buf.subarray(buf.length - MAX_RUN_OUTPUT_BYTES);
-    prefix = '…(truncated, showing last 512 KiB)\n';
-  }
-
-  return {
-    content: prefix + body.toString('utf8'),
-    mtimeMs: stat.mtimeMs,
-  };
-};
-
 module.exports = {
   prepareWorkspaceForPrototype,
   triggerRunForPrototype,
-  getRunOutputForPrototype,
   resolveRunKindFromPrototype,
   buildRunCommandForPrototype,
 };

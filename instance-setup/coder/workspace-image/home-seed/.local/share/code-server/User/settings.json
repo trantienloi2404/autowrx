@@ -59,8 +59,6 @@
     "**/*.code-search": true
   },
   "files.exclude": {
-    "**/.autowrx_out": true,
-    "**/.autowrx_run": true,
     "**/.autowrx_cargo_run.lock": true
   }
 }

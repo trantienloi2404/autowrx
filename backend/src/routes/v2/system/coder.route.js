@@ -27,10 +27,6 @@ router
   .post(auth(), validate(coderValidation.triggerRun), coderController.triggerRun);
 
 router
-  .route('/workspace/:prototypeId/run-output')
-  .get(auth(), validate(coderValidation.getRunOutput), coderController.getRunOutput);
-
-router
   .route('/workspace/:prototypeId/runtime-state')
   .get(auth(), validate(coderValidation.getRuntimeState), coderController.getRuntimeState);
 

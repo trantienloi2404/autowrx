@@ -101,6 +101,8 @@ const getHeadersWithToken = (sessionToken) => {
 };
 
 const TOKEN_LIFETIME_DURATION = '168h'; // 7d
+const TOKEN_REUSE_BUFFER_MS = 5 * 60 * 1000;
+const TOKEN_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 const delay = (ms) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
@@ -111,8 +113,6 @@ const delay = (ms) =>
  *
  * Admin API key is only used here to mint a safer token. All subsequent
  * workspace operations should use the returned token via getHeadersWithToken().
- *
- * Note: intentionally no DB caching/refresh bookkeeping to keep token flow simple.
  *
  * @param {import('mongoose').Document & {coder_username?: string}} user
  * @param {Object} [options]
@@ -126,10 +126,29 @@ const getOrCreateUserScopedToken = async (user, options = {}) => {
     throw new ApiError(httpStatus.NOT_FOUND, 'Coder user not found. Prepare workspace first.');
   }
 
+  const now = Date.now();
+  const tokenExpiresAtMs = user?.coder_scoped_token_expires_at
+    ? new Date(user.coder_scoped_token_expires_at).getTime()
+    : 0;
+  if (
+    typeof user.coder_scoped_token === 'string' &&
+    user.coder_scoped_token.trim() &&
+    Number.isFinite(tokenExpiresAtMs) &&
+    tokenExpiresAtMs > now + TOKEN_REUSE_BUFFER_MS
+  ) {
+    return user.coder_scoped_token.trim();
+  }
+
   const token = await generateSessionToken(user.coder_username, { workspaceId, coderUserId });
   if (!token) {
     throw new ApiError(httpStatus.SERVICE_UNAVAILABLE, 'Failed to generate Coder user-scoped token');
   }
+
+  const nextExpiresAt = new Date(Date.now() + TOKEN_LIFETIME_MS);
+  user.coder_scoped_token = token;
+  user.coder_scoped_token_expires_at = nextExpiresAt;
+  user.coder_scoped_token_allow = workspaceId ? `workspace:${workspaceId}` : 'all';
+  await user.save();
 
   return token;
 };

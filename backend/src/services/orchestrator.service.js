@@ -27,6 +27,7 @@ const normalizeIdForName = (value) =>
   String(value || '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
+const inFlightPrepareByUserAndKind = new Map();
 
 const ensureHostFolderPermissions = (folderPath) => {
   try {
@@ -192,7 +193,7 @@ const seedPrototypeFiles = (folderPath, prototype) => {
  * @param {string} prototypeId - Prototype ID
  * @returns {Promise<Object>} Workspace info with URL and session token
  */
-const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
+const prepareWorkspaceForPrototypeUnsafe = async (userId, prototypeId) => {
   try {
     // 1. Fetch data concurrently to save time
     const [prototype, user, coderCfg] = await Promise.all([
@@ -299,6 +300,31 @@ const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
     logger.error(`Workspace Prep Failed: ${error.message}`);
     if (error instanceof ApiError) throw error;
     throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to prepare workspace: ${error.message}`);
+  }
+};
+
+const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
+  const prototypeForLock = await Prototype.findById(prototypeId).select('language');
+  if (!prototypeForLock) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Prototype not found');
+  }
+  const workspaceKind = resolveWorkspaceKindFromPrototype(prototypeForLock);
+  const prepareKey = `${String(userId)}:${String(workspaceKind)}`;
+
+  const inFlight = inFlightPrepareByUserAndKind.get(prepareKey);
+  if (inFlight) {
+    logger.info(`Joining in-flight workspace prepare for key=${prepareKey}`);
+    return inFlight;
+  }
+
+  const task = prepareWorkspaceForPrototypeUnsafe(userId, prototypeId);
+  inFlightPrepareByUserAndKind.set(prepareKey, task);
+  try {
+    return await task;
+  } finally {
+    if (inFlightPrepareByUserAndKind.get(prepareKey) === task) {
+      inFlightPrepareByUserAndKind.delete(prepareKey);
+    }
   }
 };
 

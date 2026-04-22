@@ -106,7 +106,7 @@ const PageManageWorkspaces = () => {
                           <div className="font-medium">{workspace.name}</div>
                         </div>
                         <div className="w-[220px] min-w-[220px] text-xs text-muted-foreground">
-                          {workspace.ownerName || '-'}
+                          {workspace.ownerEmail || workspace.ownerName || '-'}
                         </div>
                         <div className="w-[140px] min-w-[140px]">
                           <span className="text-xs font-medium text-muted-foreground font-mono">

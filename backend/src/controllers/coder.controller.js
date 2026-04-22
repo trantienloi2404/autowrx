@@ -66,7 +66,10 @@ const toSameOriginCoderPath = (rawUrl) => {
   }
 };
 
-const mapWorkspacesForResponse = async (workspaces, sessionToken) => {
+const extractWorkspaceOwnerUsername = (workspace) =>
+  String(workspace?.owner_name || workspace?.owner?.username || workspace?.owner || '').trim();
+
+const mapWorkspacesForResponse = async (workspaces, sessionToken, ownerEmailByCoderUsername = new Map()) => {
   return Promise.all(workspaces.map(async (workspace) => {
     let appUrl = null;
     try {
@@ -84,10 +87,14 @@ const mapWorkspacesForResponse = async (workspaces, sessionToken) => {
         null;
     }
 
+    const ownerUsername = extractWorkspaceOwnerUsername(workspace);
+    const ownerEmail = ownerEmailByCoderUsername.get(ownerUsername) || null;
+
     return {
       id: workspace.id,
       name: workspace.name,
-      ownerName: workspace.owner_name || null,
+      ownerName: ownerEmail || workspace.owner_name || null,
+      ownerEmail,
       status: workspace?.latest_build?.status || workspace?.status || 'unknown',
       openPath: toSameOriginCoderPath(appUrl),
     };
@@ -273,7 +280,17 @@ const listAdminWorkspaces = catchAsync(async (req, res) => {
   }
 
   const workspaces = await coderService.listAllWorkspacesAdmin();
-  const mappedWorkspaces = await mapWorkspacesForResponse(workspaces, coderCfg.adminApiKey);
+  const ownerUsernames = [...new Set(workspaces.map(extractWorkspaceOwnerUsername).filter(Boolean))];
+  const users = ownerUsernames.length > 0
+    ? await User.find({ coder_username: { $in: ownerUsernames } })
+      .select('coder_username email')
+      .lean()
+    : [];
+  const ownerEmailByCoderUsername = new Map(
+    users.map((user) => [String(user.coder_username || '').trim(), user.email || null]),
+  );
+
+  const mappedWorkspaces = await mapWorkspacesForResponse(workspaces, coderCfg.adminApiKey, ownerEmailByCoderUsername);
   res.json({ workspaces: mappedWorkspaces });
 });
 

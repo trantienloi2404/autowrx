@@ -23,6 +23,7 @@ export interface MyWorkspace {
   id: string
   name: string
   ownerName?: string | null
+  ownerEmail?: string | null
   status?: string
   openPath?: string | null
 }

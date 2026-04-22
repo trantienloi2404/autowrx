@@ -69,26 +69,12 @@ const toSameOriginCoderPath = (rawUrl) => {
 const extractWorkspaceOwnerUsername = (workspace) =>
   String(workspace?.owner_name || workspace?.owner?.username || workspace?.owner || '').trim();
 
-const mapWorkspacesForResponse = async (workspaces, sessionToken, ownerEmailByCoderUsername = new Map()) => {
-  return Promise.all(workspaces.map(async (workspace) => {
-    let appUrl =
+const mapWorkspacesForResponse = (workspaces, ownerEmailByCoderUsername = new Map()) => {
+  return workspaces.map((workspace) => {
+    const appUrl =
       workspace?.latest_app_status?.uri ||
       workspace?.latest_app_status?.url ||
       null;
-    if (!appUrl) {
-      try {
-        appUrl = await coderService.getWorkspaceAppUrl(
-          workspace.id,
-          'code-server',
-          1,
-          0,
-          sessionToken,
-        );
-      } catch {
-        appUrl = null;
-      }
-    }
-
     const ownerUsername = extractWorkspaceOwnerUsername(workspace);
     const ownerEmail = ownerEmailByCoderUsername.get(ownerUsername) || null;
 
@@ -100,7 +86,7 @@ const mapWorkspacesForResponse = async (workspaces, sessionToken, ownerEmailByCo
       status: workspace?.latest_build?.status || workspace?.status || 'unknown',
       openPath: toSameOriginCoderPath(appUrl),
     };
-  }));
+  });
 };
 
 /**
@@ -268,7 +254,7 @@ const listMyWorkspaces = catchAsync(async (req, res) => {
   setCoderSessionCookie(req, res, sessionToken);
 
   const workspaces = await coderService.listMyWorkspaces(sessionToken);
-  const mappedWorkspaces = await mapWorkspacesForResponse(workspaces, sessionToken);
+  const mappedWorkspaces = mapWorkspacesForResponse(workspaces);
   res.json({ workspaces: mappedWorkspaces });
 });
 
@@ -292,7 +278,7 @@ const listAdminWorkspaces = catchAsync(async (req, res) => {
     users.map((user) => [String(user.coder_username || '').trim(), user.email || null]),
   );
 
-  const mappedWorkspaces = await mapWorkspacesForResponse(workspaces, coderCfg.adminApiKey, ownerEmailByCoderUsername);
+  const mappedWorkspaces = mapWorkspacesForResponse(workspaces, ownerEmailByCoderUsername);
   res.json({ workspaces: mappedWorkspaces });
 });
 
@@ -356,6 +342,7 @@ const deleteMyWorkspace = catchAsync(async (req, res) => {
   setCoderSessionCookie(req, res, sessionToken);
 
   const payload = await coderService.deleteWorkspace(workspaceId, sessionToken);
+  await workspaceBindingService.markBindingStaleForUserWorkspace(user.id, workspaceId);
   res.json(payload);
 });
 
@@ -386,6 +373,7 @@ const deleteAdminWorkspace = catchAsync(async (req, res) => {
   }
   const { workspaceId } = req.params;
   const payload = await coderService.deleteWorkspaceAsAdmin(workspaceId);
+  await workspaceBindingService.markBindingStaleByWorkspaceId(workspaceId);
   res.json(payload);
 });
 

@@ -45,6 +45,15 @@ cat template-python.tar | docker exec -i coder /opt/coder templates push docker-
 cat template-cpp.tar | docker exec -i coder /opt/coder templates push docker-template-cpp -d - --yes
 cat template-rust.tar | docker exec -i coder /opt/coder templates push docker-template-rust -d - --yes
 
+# Apply template scheduling metadata (native Coder scheduling).
+# Note: These settings are template metadata and cannot be configured inside docker-template.tf.
+TEMPLATE_DEFAULT_TTL="${TEMPLATE_DEFAULT_TTL:-1h}"
+TEMPLATE_ACTIVITY_BUMP="${TEMPLATE_ACTIVITY_BUMP:-1m}"
+echo "Applying template scheduling defaults (default-ttl=${TEMPLATE_DEFAULT_TTL}, activity-bump=${TEMPLATE_ACTIVITY_BUMP})..."
+docker exec -i coder /opt/coder templates edit docker-template-python --default-ttl "${TEMPLATE_DEFAULT_TTL}" --activity-bump "${TEMPLATE_ACTIVITY_BUMP}" --yes
+docker exec -i coder /opt/coder templates edit docker-template-cpp --default-ttl "${TEMPLATE_DEFAULT_TTL}" --activity-bump "${TEMPLATE_ACTIVITY_BUMP}" --yes
+docker exec -i coder /opt/coder templates edit docker-template-rust --default-ttl "${TEMPLATE_DEFAULT_TTL}" --activity-bump "${TEMPLATE_ACTIVITY_BUMP}" --yes
+
 echo "Warming up Docker runtime cache..."
 docker run --rm --name autowrx-workspace-python-cache-warmup --entrypoint /bin/true autowrx-workspace-python:debian
 docker run --rm --name autowrx-workspace-cpp-cache-warmup --entrypoint /bin/true autowrx-workspace-cpp:debian

@@ -23,6 +23,8 @@ provider "docker" {
 
 provider "coder" {}
 
+# Workspace scheduling (default autostop/activity bump) is configured at template metadata level
+# via `coder templates edit` (see instance-setup/coder/start.sh), not inside this Terraform file.
 data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}

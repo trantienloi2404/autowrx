@@ -136,6 +136,14 @@ const withTransientRetry = async (fn, options = {}) => {
   }
 };
 
+const resolveWorkspaceTtlMsFromConfig = () => {
+  const ttlSeconds = Number(coderConfig.getCoderConfigSync().workspaceTtlSeconds);
+  if (!Number.isFinite(ttlSeconds) || ttlSeconds < 0) {
+    return 0;
+  }
+  return Math.floor(ttlSeconds * 1000);
+};
+
 /**
  * Generate a user-scoped token for Coder API calls.
  *
@@ -483,6 +491,7 @@ const getOrCreateWorkspace = async (
         template_id: templateId,
         name: workspaceName,
         rich_parameter_values: richParameterValues,
+        ttl_ms: resolveWorkspaceTtlMsFromConfig(),
       },
       { headers: getHeadersWithToken(sessionToken) },
     );
@@ -541,6 +550,32 @@ const getOrCreateWorkspace = async (
       }
 
       throw toCoderApiError(error, httpStatus.INTERNAL_SERVER_ERROR);
+    }
+    throw error;
+  }
+};
+
+/**
+ * Update workspace TTL using Coder native endpoint.
+ * @param {string} workspaceId
+ * @param {number} ttlMs
+ * @param {string|null} sessionToken
+ * @returns {Promise<Object>}
+ */
+const updateWorkspaceTtl = async (workspaceId, ttlMs, sessionToken = null) => {
+  const safeTtlMs = Number.isFinite(Number(ttlMs)) ? Math.max(0, Math.floor(Number(ttlMs))) : 0;
+  try {
+    const response = await axios.put(
+      `${getCoderApiBase()}/workspaces/${workspaceId}/ttl`,
+      { ttl_ms: safeTtlMs },
+      { headers: getHeadersWithToken(sessionToken) },
+    );
+    logger.info(`Updated Coder workspace TTL: ${workspaceId} -> ${safeTtlMs}ms`);
+    return response.data;
+  } catch (error) {
+    logger.warn(`Failed to update Coder workspace TTL for ${workspaceId}: ${error.message}`);
+    if (error.response) {
+      logger.warn(`Update TTL error status=${error.response.status}, data=${JSON.stringify(error.response.data)}`);
     }
     throw error;
   }
@@ -1258,4 +1293,5 @@ module.exports = {
   sanitizeWorkspaceName,
   getWorkspaceAgentId,
   assertUserScopedPrototypePath,
+  updateWorkspaceTtl,
 };

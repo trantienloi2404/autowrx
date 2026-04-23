@@ -274,6 +274,16 @@ const prepareWorkspaceForPrototypeUnsafe = async (userId, prototypeId) => {
 
     // Reuse the same user token for the whole tab-open flow to avoid minting multiple times.
     const workspaceScopedToken = userScopedToken;
+    const workspaceTtlSeconds = Number(coderCfg.workspaceTtlSeconds);
+    const workspaceTtlMs =
+      Number.isFinite(workspaceTtlSeconds) && workspaceTtlSeconds >= 0
+        ? Math.floor(workspaceTtlSeconds * 1000)
+        : 0;
+    try {
+      await coderService.updateWorkspaceTtl(workspace.id, workspaceTtlMs, workspaceScopedToken);
+    } catch (ttlErr) {
+      logger.warn(`Workspace TTL update failed for ${workspace.id}: ${ttlErr.message}`);
+    }
 
     // 6. Ensure Workspace is running
     let status = workspace.latest_build?.status;

@@ -304,6 +304,16 @@ export const PREDEFINED_SITE_CONFIGS: any[] = [
     description: 'Redis URL used by VSCode workspace runtime state storage.',
     category: 'vscode',
   },
+  {
+    key: 'CODER_WORKSPACE_TTL_SECONDS',
+    scope: 'site',
+    value: 3600,
+    secret: false,
+    valueType: 'number',
+    description:
+      'Default workspace TTL in seconds (e.g. 3600 = 1 hour). Set 0 to disable.',
+    category: 'vscode',
+  },
 ]
 
 export const PREDEFINED_GENAI_CONFIG_KEYS: string[] =

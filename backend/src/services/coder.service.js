@@ -107,6 +107,34 @@ const delay = (ms) =>
   new Promise((resolve) => {
     setTimeout(resolve, ms);
   });
+const TRANSIENT_HTTP_STATUSES = new Set([httpStatus.TOO_MANY_REQUESTS, 502, 503, 504]);
+const TRANSIENT_NETWORK_CODES = new Set(['ETIMEDOUT', 'ECONNRESET', 'ECONNABORTED', 'EAI_AGAIN']);
+
+const isTransientCoderError = (error) => {
+  const status = error?.response?.status;
+  if (TRANSIENT_HTTP_STATUSES.has(status)) return true;
+  const code = String(error?.code || '').toUpperCase();
+  return TRANSIENT_NETWORK_CODES.has(code);
+};
+
+const withTransientRetry = async (fn, options = {}) => {
+  const maxAttempts = options.maxAttempts ?? 3;
+  const baseDelayMs = options.baseDelayMs ?? 250;
+  let attempt = 1;
+  while (true) {
+    try {
+      return await fn();
+    } catch (error) {
+      if (attempt >= maxAttempts || !isTransientCoderError(error)) {
+        throw error;
+      }
+      const waitMs = baseDelayMs * 2 ** (attempt - 1);
+      logger.warn(`Transient Coder API error, retrying attempt ${attempt + 1}/${maxAttempts} after ${waitMs}ms: ${error.message}`);
+      await delay(waitMs);
+      attempt += 1;
+    }
+  }
+};
 
 /**
  * Generate a user-scoped token for Coder API calls.
@@ -730,10 +758,14 @@ const listAllWorkspacesAdmin = async () => {
 
     // Coder API can paginate workspace lists; fetch all pages for admin management views.
     while (true) {
-      const response = await axios.get(`${getCoderApiBase()}/workspaces`, {
-        headers,
-        params: { limit: pageSize, offset },
-      });
+      const response = await withTransientRetry(
+        () =>
+          axios.get(`${getCoderApiBase()}/workspaces`, {
+            headers,
+            params: { limit: pageSize, offset },
+          }),
+        { maxAttempts: 3, baseDelayMs: 300 }
+      );
       const page = extractCollection(response.data, 'workspaces');
       all.push(...page);
       if (page.length < pageSize) {
@@ -858,9 +890,13 @@ const restoreUnhealthyRunningWorkspace = async (workspaceId, sessionToken = null
  */
 async function getWorkspaceStatus(workspaceId, sessionToken = null) {
   try {
-    const response = await axios.get(`${getCoderApiBase()}/workspaces/${workspaceId}`, {
-      headers: getHeadersWithToken(sessionToken),
-    });
+    const response = await withTransientRetry(
+      () =>
+        axios.get(`${getCoderApiBase()}/workspaces/${workspaceId}`, {
+          headers: getHeadersWithToken(sessionToken),
+        }),
+      { maxAttempts: 3, baseDelayMs: 250 }
+    );
 
     return response.data;
   } catch (error) {

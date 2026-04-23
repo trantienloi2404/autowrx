@@ -13,12 +13,36 @@ const { PERMISSIONS } = require('../config/roles');
 const ApiError = require('../utils/ApiError');
 const { Prototype, User } = require('../models');
 const coderConfig = require('../utils/coderConfig');
+const logger = require('../config/logger');
 const { sanitizePrototypeFolderName, getPrototypeModelId } = require('../utils/prototypePath');
 const { resolveWorkspaceKindFromPrototype } = require('../utils/workspaceKind');
 const workspaceRuntimeStateService = require('../services/workspaceRuntimeState.service');
 
 const CODER_SESSION_COOKIE = 'coder_session_token';
 const CODER_SESSION_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const WORKSPACE_PREPARE_TIMEOUT_MS = 2 * 60 * 1000;
+const WORKSPACE_OPEN_TIMEOUT_MS = 90 * 1000;
+
+const getRequestId = (req) =>
+  String(req.id || req.headers['x-request-id'] || req.headers['x-correlation-id'] || `coder-${Date.now()}`);
+
+const logCoderOperation = (op, payload) => {
+  logger.info(`[coder-op] ${op} | ${JSON.stringify(payload)}`);
+};
+
+const withTimeout = async (promise, timeoutMs, timeoutMessage) => {
+  let timeoutId;
+  const timeoutPromise = new Promise((_, reject) => {
+    timeoutId = setTimeout(() => {
+      reject(new ApiError(httpStatus.GATEWAY_TIMEOUT, timeoutMessage));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeoutPromise]);
+  } finally {
+    clearTimeout(timeoutId);
+  }
+};
 
 const isSecureRequest = (req) => {
   if (req.secure) return true;
@@ -93,6 +117,8 @@ const mapWorkspacesForResponse = (workspaces, ownerEmailByCoderUsername = new Ma
  * Get workspace URL and session token for a prototype
  */
 const getWorkspace = catchAsync(async (req, res) => {
+  const requestId = getRequestId(req);
+  const startedAt = Date.now();
   const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
   if (!coderCfg.enabled) {
     throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
@@ -119,19 +145,39 @@ const getWorkspace = catchAsync(async (req, res) => {
   }
 
   const sessionToken = await resolveCoderSessionToken(req, user, workspaceId);
-  const workspace = await coderService.getWorkspaceStatus(workspaceId, sessionToken);
+  const workspace = await withTimeout(
+    coderService.getWorkspaceStatus(workspaceId, sessionToken),
+    WORKSPACE_OPEN_TIMEOUT_MS,
+    'Fetching workspace status timed out. Please retry in a few seconds.',
+  );
   const prototypeFolderPath = `${getPrototypeModelId(prototype)}/${sanitizePrototypeFolderName(prototype.name)}`;
 
-  const appUrl = await coderService.getWorkspaceAppUrl(
-    workspaceId,
-    'code-server',
-    5,
-    2000,
-    sessionToken,
+  const appUrl = await withTimeout(
+    coderService.getWorkspaceAppUrl(
+      workspaceId,
+      'code-server',
+      5,
+      2000,
+      sessionToken,
+    ),
+    WORKSPACE_OPEN_TIMEOUT_MS,
+    'Resolving workspace app URL timed out. Please retry in a few seconds.',
   );
 
-  await coderService.waitUntilCoderAppProxyReady(appUrl, sessionToken);
+  await withTimeout(
+    coderService.waitUntilCoderAppProxyReady(appUrl, sessionToken),
+    WORKSPACE_OPEN_TIMEOUT_MS,
+    'Workspace app proxy is taking too long to become ready. Please retry shortly.',
+  );
   setCoderSessionCookie(req, res, sessionToken);
+
+  logCoderOperation('getWorkspace.success', {
+    requestId,
+    userId: String(userId),
+    prototypeId: String(prototypeId),
+    workspaceId: String(workspaceId),
+    durationMs: Date.now() - startedAt,
+  });
 
   res.json({
     workspaceId: workspace.id,
@@ -147,6 +193,8 @@ const getWorkspace = catchAsync(async (req, res) => {
  * Prepare workspace (create if needed)
  */
 const prepareWorkspace = catchAsync(async (req, res) => {
+  const requestId = getRequestId(req);
+  const startedAt = Date.now();
   const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
   if (!coderCfg.enabled) {
     throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
@@ -167,8 +215,20 @@ const prepareWorkspace = catchAsync(async (req, res) => {
   }
 
   // Prepare workspace
-  const workspaceInfo = await orchestratorService.prepareWorkspaceForPrototype(userId, prototypeId);
+  const workspaceInfo = await withTimeout(
+    orchestratorService.prepareWorkspaceForPrototype(userId, prototypeId),
+    WORKSPACE_PREPARE_TIMEOUT_MS,
+    'Preparing workspace timed out. Please retry shortly.',
+  );
   setCoderSessionCookie(req, res, workspaceInfo.sessionToken);
+
+  logCoderOperation('prepareWorkspace.success', {
+    requestId,
+    userId: String(userId),
+    prototypeId: String(prototypeId),
+    workspaceId: String(workspaceInfo.workspaceId),
+    durationMs: Date.now() - startedAt,
+  });
 
   res.json({
     workspaceId: workspaceInfo.workspaceId,
@@ -241,6 +301,8 @@ const getRuntimeState = catchAsync(async (req, res) => {
  * List workspaces for current user.
  */
 const listMyWorkspaces = catchAsync(async (req, res) => {
+  const requestId = getRequestId(req);
+  const startedAt = Date.now();
   const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
   if (!coderCfg.enabled) {
     throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
@@ -255,6 +317,12 @@ const listMyWorkspaces = catchAsync(async (req, res) => {
 
   const workspaces = await coderService.listMyWorkspaces(sessionToken);
   const mappedWorkspaces = mapWorkspacesForResponse(workspaces);
+  logCoderOperation('listMyWorkspaces.success', {
+    requestId,
+    userId: String(req.user.id),
+    count: mappedWorkspaces.length,
+    durationMs: Date.now() - startedAt,
+  });
   res.json({ workspaces: mappedWorkspaces });
 });
 
@@ -262,6 +330,8 @@ const listMyWorkspaces = catchAsync(async (req, res) => {
  * List all workspaces for admins.
  */
 const listAdminWorkspaces = catchAsync(async (req, res) => {
+  const requestId = getRequestId(req);
+  const startedAt = Date.now();
   const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
   if (!coderCfg.enabled) {
     throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
@@ -279,6 +349,12 @@ const listAdminWorkspaces = catchAsync(async (req, res) => {
   );
 
   const mappedWorkspaces = mapWorkspacesForResponse(workspaces, ownerEmailByCoderUsername);
+  logCoderOperation('listAdminWorkspaces.success', {
+    requestId,
+    adminUserId: String(req.user.id),
+    count: mappedWorkspaces.length,
+    durationMs: Date.now() - startedAt,
+  });
   res.json({ workspaces: mappedWorkspaces });
 });
 

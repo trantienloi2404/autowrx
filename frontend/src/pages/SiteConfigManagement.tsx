@@ -311,7 +311,7 @@ export const PREDEFINED_SITE_CONFIGS: any[] = [
     secret: false,
     valueType: 'number',
     description:
-      'Default workspace TTL in seconds (e.g. 3600 = 1 hour). Set 0 to disable.',
+      'Default workspace TTL in seconds (minimum 60, e.g. 3600 = 1 hour).',
     category: 'vscode',
   },
 ]

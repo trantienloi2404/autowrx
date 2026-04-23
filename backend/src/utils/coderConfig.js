@@ -36,7 +36,7 @@ const normalizeConfig = (values) => {
   const workspaceTtlSecondsRaw = values[KEYS.workspaceTtlSeconds];
   const workspaceTtlSeconds = Number(workspaceTtlSecondsRaw);
   const safeWorkspaceTtlSeconds = Number.isFinite(workspaceTtlSeconds)
-    ? Math.max(0, workspaceTtlSeconds)
+    ? Math.max(60, Math.floor(workspaceTtlSeconds))
     : DEFAULTS.workspaceTtlSeconds;
 
   return {

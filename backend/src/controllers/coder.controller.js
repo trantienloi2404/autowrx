@@ -93,12 +93,44 @@ const toSameOriginCoderPath = (rawUrl) => {
 const extractWorkspaceOwnerUsername = (workspace) =>
   String(workspace?.owner_name || workspace?.owner?.username || workspace?.owner || '').trim();
 
+const extractWorkspaceAgentName = (workspace) => {
+  const latestBuildResources = Array.isArray(workspace?.latest_build?.resources) ? workspace.latest_build.resources : [];
+  for (const resource of latestBuildResources) {
+    const firstAgentName = resource?.agents?.[0]?.name;
+    if (firstAgentName) {
+      return String(firstAgentName).trim();
+    }
+  }
+  const resources = Array.isArray(workspace?.resources) ? workspace.resources : [];
+  for (const resource of resources) {
+    const firstAgentName = resource?.agents?.[0]?.name;
+    if (firstAgentName) {
+      return String(firstAgentName).trim();
+    }
+  }
+  return 'main';
+};
+
+const resolveWorkspaceAppUrl = (workspace) => {
+  const directUrl = workspace?.latest_app_status?.uri || workspace?.latest_app_status?.url;
+  if (directUrl) {
+    return directUrl;
+  }
+
+  const coderUrl = String(coderConfig.getCoderConfigSync().coderUrl || '').replace(/\/$/, '');
+  const ownerName = extractWorkspaceOwnerUsername(workspace);
+  const workspaceName = String(workspace?.name || '').trim();
+  const agentName = extractWorkspaceAgentName(workspace);
+  if (!coderUrl || !ownerName || !workspaceName || !agentName) {
+    return null;
+  }
+
+  return `${coderUrl}/@${ownerName}/${workspaceName}.${agentName}/apps/code-server/`;
+};
+
 const mapWorkspacesForResponse = (workspaces, ownerEmailByCoderUsername = new Map()) => {
   return workspaces.map((workspace) => {
-    const appUrl =
-      workspace?.latest_app_status?.uri ||
-      workspace?.latest_app_status?.url ||
-      null;
+    const appUrl = resolveWorkspaceAppUrl(workspace);
     const ownerUsername = extractWorkspaceOwnerUsername(workspace);
     const ownerEmail = ownerEmailByCoderUsername.get(ownerUsername) || null;
 

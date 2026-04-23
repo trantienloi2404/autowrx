@@ -93,10 +93,11 @@ const PageManageWorkspaces = () => {
   }, [filteredRows.length])
 
   const handleOpenWorkspace = (workspace: MyWorkspace) => {
-    if (!workspace.openPath) {
+    const status = normalizeStatus(workspace.status)
+    if (status !== 'running' || !workspace.openPath) {
       toast({
         title: 'Cannot open workspace',
-        description: 'Open URL is not available yet for this workspace.',
+        description: 'Open URL is available only when the workspace is running.',
         duration: 2500,
       })
       return
@@ -171,6 +172,7 @@ const PageManageWorkspaces = () => {
                   {visibleRows.map((workspace) => {
                     const status = normalizeStatus(workspace.status)
                     const showStart = status === 'stopped'
+                    const canOpenWorkspace = status === 'running' && Boolean(workspace.openPath)
                     const isStartStopPending = startWorkspace.isPending || stopWorkspace.isPending
                     return (
                       <div
@@ -193,7 +195,7 @@ const PageManageWorkspaces = () => {
                             variant="outline"
                             size="sm"
                             onClick={() => handleOpenWorkspace(workspace)}
-                            disabled={isRefetching || !workspace.openPath}
+                            disabled={isRefetching || !canOpenWorkspace}
                           >
                             <TbExternalLink className="w-4 h-4 mr-1" />
                             Open URL

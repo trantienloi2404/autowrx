@@ -272,6 +272,8 @@ const prepareWorkspaceForPrototypeUnsafe = async (userId, prototypeId) => {
       workspaceKind,
     });
 
+    const workspaceId = workspace.id;
+
     // Reuse the same user token for the whole tab-open flow to avoid minting multiple times.
     const workspaceScopedToken = userScopedToken;
     const workspaceTtlSeconds = Number(coderCfg.workspaceTtlSeconds);
@@ -280,20 +282,21 @@ const prepareWorkspaceForPrototypeUnsafe = async (userId, prototypeId) => {
         ? Math.floor(workspaceTtlSeconds * 1000)
         : 0;
     try {
-      await coderService.updateWorkspaceTtl(workspace.id, workspaceTtlMs, workspaceScopedToken);
+      await coderService.updateWorkspaceTtl(workspaceId, workspaceTtlMs, workspaceScopedToken);
     } catch (ttlErr) {
-      logger.warn(`Workspace TTL update failed for ${workspace.id}: ${ttlErr.message}`);
+      logger.warn(`Workspace TTL update failed for ${workspaceId}: ${ttlErr.message}`);
     }
 
     // 6. Ensure Workspace is running
     let status = workspace.latest_build?.status;
     if (status !== 'running') {
-      workspace = await coderService.startWorkspace(workspace.id, workspaceScopedToken);
-      status = workspace.latest_build?.status;
+      await coderService.startWorkspace(workspaceId, workspaceScopedToken);
+      workspace = await coderService.getWorkspaceStatus(workspaceId, workspaceScopedToken);
+      status = workspace?.latest_build?.status;
     }
 
     // 6b. Coder can keep latest_build "running" after the container/agent is gone; stop+start once to recover
-    workspace = await coderService.restoreUnhealthyRunningWorkspace(workspace.id, workspaceScopedToken);
+    workspace = await coderService.restoreUnhealthyRunningWorkspace(workspaceId, workspaceScopedToken);
     status = workspace.latest_build?.status;
 
     logger.info(`Workspace ready | User: ${userId} | Proto: ${prototypeId} | Folder: ${prototypeFolderRelativePath}`);

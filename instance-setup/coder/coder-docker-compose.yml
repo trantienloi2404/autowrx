@@ -46,9 +46,9 @@ services:
           chmod 666 /var/run/docker.sock
         fi
         if [ -f /home/coder/.terraformrc ]; then
-          exec su coder -c 'export TF_CLI_CONFIG_FILE=/home/coder/.terraformrc; export TF_PLUGIN_CACHE_DIR=/var/cache/terraform-plugins; exec /opt/coder server --dangerous-allow-path-app-sharing --dangerous-allow-path-app-site-owner-access'
+          exec su coder -c 'export TF_CLI_CONFIG_FILE=/home/coder/.terraformrc; export TF_PLUGIN_CACHE_DIR=/var/cache/terraform-plugins; exec /opt/coder server'
         else
-          exec su coder -c 'export TF_PLUGIN_CACHE_DIR=/var/cache/terraform-plugins; exec /opt/coder server --dangerous-allow-path-app-sharing --dangerous-allow-path-app-site-owner-access'
+          exec su coder -c 'export TF_PLUGIN_CACHE_DIR=/var/cache/terraform-plugins; exec /opt/coder server'
         fi
     ports:
       - "7080:7080"

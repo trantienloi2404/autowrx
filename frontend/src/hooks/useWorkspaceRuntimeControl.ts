@@ -187,10 +187,13 @@ export default function useWorkspaceRuntimeControl() {
     setVscodeRunOutput('')
     setAppLog('')
 
-    void triggerWorkspaceRun(id).catch((error) => {
-      console.error('[DaWorkspaceRuntimeControl] Coder trigger-run failed:', error)
+    void triggerWorkspaceRun(id).catch((error: unknown) => {
+      const err = error as { response?: { data?: { message?: string } }; message?: string }
+      const message =
+        err?.response?.data?.message || err?.message || 'Failed to trigger workspace run.'
+      console.error('[DaWorkspaceRuntimeControl] Coder trigger-run failed:', message)
       setRunStatus('error')
-      setRunBlockReason(error?.message || 'Failed to trigger workspace run.')
+      setRunBlockReason(message)
     })
 
     notifyWidgetIframes({ action: 'run-app' })

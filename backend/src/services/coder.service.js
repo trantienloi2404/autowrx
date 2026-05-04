@@ -23,8 +23,17 @@ const extractCollection = (payload, key) => {
 };
 
 const toCoderApiError = (error, fallbackStatus, fallbackPrefix = 'Coder API error') => {
-  const status = error?.response?.status || fallbackStatus;
+  const upstreamStatus = error?.response?.status || fallbackStatus;
   const message = error?.response?.data?.message || error?.message || JSON.stringify(error?.response?.data || {});
+
+  // Coder may return 401/403 when CODER_ADMIN_API_KEY is invalid or expired. Forwarding those
+  // status codes to the browser makes the AutoWRX axios layer treat them as a stale *user*
+  // session and repeatedly hit /auth/refresh-tokens while the real fault is server-to-Coder auth.
+  let status = upstreamStatus;
+  if (upstreamStatus === httpStatus.UNAUTHORIZED || upstreamStatus === httpStatus.FORBIDDEN) {
+    status = httpStatus.BAD_GATEWAY;
+  }
+
   return new ApiError(status, `${fallbackPrefix}: ${message}`);
 };
 

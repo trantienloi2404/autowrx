@@ -296,15 +296,6 @@ export const PREDEFINED_SITE_CONFIGS: any[] = [
     category: 'vscode',
   },
   {
-    key: 'REDIS_URL',
-    scope: 'site',
-    value: 'redis://localhost:6379',
-    secret: false,
-    valueType: 'string',
-    description: 'Redis URL used by VSCode workspace runtime state storage.',
-    category: 'vscode',
-  },
-  {
     key: 'CODER_WORKSPACE_TTL_SECONDS',
     scope: 'site',
     value: 3600,

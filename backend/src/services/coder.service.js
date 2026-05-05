@@ -486,10 +486,6 @@ const getOrCreateWorkspace = async (
         name: 'prototypes_host_path',
         value: prototypesHostPath || coderCfg.prototypesPath || '/opt/autowrx/prototypes',
       },
-      {
-        name: 'redis_url',
-        value: coderCfg.redisUrl || '',
-      },
     ];
 
     // Create workspace as the user (token-based), per Coder REST API docs.

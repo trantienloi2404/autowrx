@@ -6,35 +6,17 @@
 //
 // SPDX-License-Identifier: MIT
 
-const { createClient } = require('redis');
-const logger = require('../config/logger');
-const coderConfig = require('../utils/coderConfig');
+/**
+ * Runtime state for workspace runs (stdout-derived APIs, status, log tail).
+ * Held in process memory only — cleared on backend restart and expired entries by TTL.
+ */
 
 const KEY_TTL_SECONDS = Number(process.env.RUNTIME_STATE_TTL_SECONDS || 24 * 60 * 60);
 const MAX_APP_LOG_BYTES = Number(process.env.RUNTIME_APP_LOG_MAX_BYTES || 256 * 1024);
 
-let redisClient = null;
-let redisReady = false;
-let redisUrl = '';
-let redisConnectPromise = null;
-
 const memoryState = new Map();
 
-const keyPrefix = (workspaceId) => `autowrx:rt:${String(workspaceId)}`;
-const keySignals = (workspaceId) => `${keyPrefix(workspaceId)}:signals`;
-const keyTraceVars = (workspaceId) => `${keyPrefix(workspaceId)}:trace`;
-const keyAppLog = (workspaceId) => `${keyPrefix(workspaceId)}:applog`;
-const keyMeta = (workspaceId) => `${keyPrefix(workspaceId)}:meta`;
-
 const nowIso = () => new Date().toISOString();
-
-const parseJsonField = (value) => {
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-};
 
 const parseNdjsonObjects = (content) => {
   if (!content || typeof content !== 'string') return {};
@@ -87,114 +69,21 @@ const cleanupExpiredMemory = () => {
   });
 };
 
-const closeRedisClient = async () => {
-  if (!redisClient) return;
-  try {
-    await redisClient.quit();
-  } catch {
-    try {
-      redisClient.disconnect();
-    } catch {
-      // ignore
-    }
-  }
-  redisClient = null;
-  redisReady = false;
-  redisUrl = '';
-  redisConnectPromise = null;
-};
-
-const ensureRedisClientConnected = async () => {
-  let configuredRedisUrl = '';
-  try {
-    const cfg = await coderConfig.getCoderConfig();
-    configuredRedisUrl = String(cfg?.redisUrl || '').trim();
-  } catch {
-    configuredRedisUrl = '';
-  }
-
-  if (!configuredRedisUrl) {
-    if (redisClient) await closeRedisClient();
-    return;
-  }
-
-  if (redisClient && redisUrl === configuredRedisUrl) {
-    if (redisReady) return;
-    if (redisConnectPromise) {
-      await redisConnectPromise.catch(() => {});
-    }
-    return;
-  }
-
-  if (redisClient && redisUrl !== configuredRedisUrl) {
-    await closeRedisClient();
-  }
-
-  redisClient = createClient({ url: configuredRedisUrl });
-  redisUrl = configuredRedisUrl;
-
-  redisClient.on('error', (error) => {
-    redisReady = false;
-    logger.warn(`[workspace-runtime-state] redis error: ${error?.message || error}`);
-  });
-  redisClient.on('ready', () => {
-    redisReady = true;
-    logger.info(`[workspace-runtime-state] redis connected (${redisUrl})`);
-  });
-  redisClient.on('end', () => {
-    redisReady = false;
-    logger.warn('[workspace-runtime-state] redis disconnected');
-  });
-
-  redisConnectPromise = redisClient.connect().catch((error) => {
-    redisReady = false;
-    logger.warn(`[workspace-runtime-state] redis connect failed: ${error?.message || error}`);
-  });
-  await redisConnectPromise;
-};
-
-const appendToAppLog = async (workspaceId, text) => {
+const appendToAppLog = (workspaceId, text) => {
   if (!text) return;
-  await ensureRedisClientConnected();
-  if (redisReady && redisClient) {
-    const current = await redisClient.get(keyAppLog(workspaceId));
-    const next = ensureAppLogSize(`${current || ''}${text}`);
-    await redisClient.set(keyAppLog(workspaceId), next, { EX: KEY_TTL_SECONDS });
-    return;
-  }
   const entry = ensureMemoryEntry(workspaceId);
   entry.appLog = ensureAppLogSize(`${entry.appLog || ''}${text}`);
 };
 
-const setStatus = async (workspaceId, status) => {
-  const updatedAt = nowIso();
-  await ensureRedisClientConnected();
-  if (redisReady && redisClient) {
-    await redisClient.hSet(keyMeta(workspaceId), {
-      status: String(status || ''),
-      updatedAt,
-    });
-    await redisClient.expire(keyMeta(workspaceId), KEY_TTL_SECONDS);
-    return;
-  }
+const setStatus = (workspaceId, status) => {
   const entry = ensureMemoryEntry(workspaceId);
   entry.status = String(status || '');
-  entry.updatedAt = updatedAt;
+  entry.updatedAt = nowIso();
 };
 
-const mergeSignals = async (workspaceId, patch) => {
+const mergeSignals = (workspaceId, patch) => {
   const entries = Object.entries(patch || {});
   if (entries.length === 0) return;
-  await ensureRedisClientConnected();
-  if (redisReady && redisClient) {
-    const valueMap = {};
-    entries.forEach(([k, v]) => {
-      valueMap[String(k)] = JSON.stringify(v);
-    });
-    await redisClient.hSet(keySignals(workspaceId), valueMap);
-    await redisClient.expire(keySignals(workspaceId), KEY_TTL_SECONDS);
-    return;
-  }
   const entry = ensureMemoryEntry(workspaceId);
   entry.signals = { ...(entry.signals || {}), ...patch };
 };
@@ -209,30 +98,30 @@ const ingestRunnerPayload = async (workspaceId, payload) => {
     const text = String(payload.data || '');
     if (text) {
       const patch = parseNdjsonObjects(text);
-      await mergeSignals(workspaceId, patch);
-      await appendToAppLog(workspaceId, text);
+      mergeSignals(workspaceId, patch);
+      appendToAppLog(workspaceId, text);
     }
-    await setStatus(workspaceId, 'running');
+    setStatus(workspaceId, 'running');
     return;
   }
   if (type === 'run.waiting_input') {
-    await setStatus(workspaceId, 'waiting_input');
+    setStatus(workspaceId, 'waiting_input');
     return;
   }
   if (type === 'run.started') {
-    await setStatus(workspaceId, 'running');
+    setStatus(workspaceId, 'running');
     return;
   }
   if (type === 'run.error') {
     const message = String(payload.message || payload.error || payload.data || 'Runner error');
-    await appendToAppLog(workspaceId, `\n[run.error] ${message}\n`);
-    await setStatus(workspaceId, 'error');
+    appendToAppLog(workspaceId, `\n[run.error] ${message}\n`);
+    setStatus(workspaceId, 'error');
     return;
   }
   if (type === 'run.exit') {
     const summary = `\n[run.exit] code=${payload.code} signal=${payload.signal || 'none'}\n`;
-    await appendToAppLog(workspaceId, summary);
-    await setStatus(workspaceId, 'exited');
+    appendToAppLog(workspaceId, summary);
+    setStatus(workspaceId, 'exited');
   }
 };
 
@@ -244,31 +133,6 @@ const getRuntimeStateSnapshot = async (workspaceId) => {
       appLog: '',
       status: 'connecting',
       updatedAt: nowIso(),
-    };
-  }
-
-  await ensureRedisClientConnected();
-  if (redisReady && redisClient) {
-    const [signalsRaw, traceRaw, appLog, metaRaw] = await Promise.all([
-      redisClient.hGetAll(keySignals(workspaceId)),
-      redisClient.hGetAll(keyTraceVars(workspaceId)),
-      redisClient.get(keyAppLog(workspaceId)),
-      redisClient.hGetAll(keyMeta(workspaceId)),
-    ]);
-    const apisValue = {};
-    Object.entries(signalsRaw || {}).forEach(([k, v]) => {
-      apisValue[k] = parseJsonField(v);
-    });
-    const traceVars = {};
-    Object.entries(traceRaw || {}).forEach(([k, v]) => {
-      traceVars[k] = parseJsonField(v);
-    });
-    return {
-      apisValue,
-      traceVars,
-      appLog: String(appLog || ''),
-      status: String(metaRaw?.status || 'connecting'),
-      updatedAt: String(metaRaw?.updatedAt || nowIso()),
     };
   }
 

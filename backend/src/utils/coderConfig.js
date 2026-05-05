@@ -7,7 +7,6 @@ const KEYS = {
   coderUrl: 'CODER_URL',
   coderAdminApiKey: 'CODER_ADMIN_API_KEY',
   prototypesPath: 'PROTOTYPES_PATH',
-  redisUrl: 'REDIS_URL',
   workspaceTtlSeconds: 'CODER_WORKSPACE_TTL_SECONDS',
 };
 
@@ -17,7 +16,6 @@ const DEFAULTS = {
   coderUrl: 'http://localhost:7080',
   adminApiKey: '',
   prototypesPath: '/opt/autowrx/prototypes',
-  redisUrl: 'redis://localhost:6379',
   workspaceTtlSeconds: 3600,
 };
 
@@ -32,7 +30,6 @@ const normalizeConfig = (values) => {
   const coderUrl = values[KEYS.coderUrl] ?? DEFAULTS.coderUrl;
   const adminApiKey = values[KEYS.coderAdminApiKey] ?? DEFAULTS.adminApiKey;
   const prototypesPath = values[KEYS.prototypesPath] ?? DEFAULTS.prototypesPath;
-  const redisUrl = values[KEYS.redisUrl] ?? DEFAULTS.redisUrl;
   const workspaceTtlSecondsRaw = values[KEYS.workspaceTtlSeconds];
   const workspaceTtlSeconds = Number(workspaceTtlSecondsRaw);
   const safeWorkspaceTtlSeconds = Number.isFinite(workspaceTtlSeconds)
@@ -44,7 +41,6 @@ const normalizeConfig = (values) => {
     coderUrl: String(coderUrl),
     adminApiKey: String(adminApiKey),
     prototypesPath: String(prototypesPath),
-    redisUrl: String(redisUrl || ''),
     workspaceTtlSeconds: safeWorkspaceTtlSeconds,
   };
 };

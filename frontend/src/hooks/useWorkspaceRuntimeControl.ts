@@ -327,7 +327,7 @@ export default function useWorkspaceRuntimeControl() {
             case 'run.vars': {
               const varsPatch = payload.vars
               if (varsPatch && typeof varsPatch === 'object' && !Array.isArray(varsPatch)) {
-                writeVarsValue(varsPatch as Record<string, unknown>)
+                writeSignalValue(varsPatch as Record<string, unknown>)
               }
               return
             }
@@ -382,6 +382,7 @@ export default function useWorkspaceRuntimeControl() {
     setActiveApis,
     setAppLog,
     setTraceVars,
+    writeSignalValue,
     writeVarsValue,
   ])
 

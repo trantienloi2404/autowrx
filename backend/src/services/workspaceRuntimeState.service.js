@@ -56,11 +56,11 @@ const appendToAppLog = (workspaceId, text) => {
   entry.appLog = ensureAppLogSize(`${entry.appLog || ''}${text}`);
 };
 
-const mergeTraceVars = (workspaceId, patch) => {
+const mergeApisValue = (workspaceId, patch) => {
   const entries = Object.entries(patch || {});
   if (entries.length === 0) return;
   const entry = ensureMemoryEntry(workspaceId);
-  entry.traceVars = { ...(entry.traceVars || {}), ...patch };
+  entry.signals = { ...(entry.signals || {}), ...patch };
   entry.updatedAt = nowIso();
 };
 
@@ -87,7 +87,7 @@ const ingestRunnerPayload = async (workspaceId, payload) => {
   if (type === 'run.vars') {
     const varsPatch = payload.vars;
     if (varsPatch && typeof varsPatch === 'object' && !Array.isArray(varsPatch)) {
-      mergeTraceVars(workspaceId, varsPatch);
+      mergeApisValue(workspaceId, varsPatch);
     }
     return;
   }

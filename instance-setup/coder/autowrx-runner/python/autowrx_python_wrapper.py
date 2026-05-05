@@ -5,8 +5,10 @@ import json
 import os
 import runpy
 import sys
+import threading
+from queue import Empty, SimpleQueue
 from types import FrameType
-from typing import Any, Dict, List
+from typing import Any, Dict
 
 
 MAX_DEPTH = 3
@@ -37,22 +39,27 @@ def sanitize_value(value: Any, depth: int = 0) -> Any:
 
 
 class VarsEmitter:
-    def __init__(self, script_path: str, vars_out_path: str, control_in_path: str = ""):
+    def __init__(self, script_path: str, vars_out_path: str = "", vars_pipe_path: str = "", control_pipe_path: str = ""):
         self.script_path = os.path.abspath(script_path)
-        self.vars_out_path = vars_out_path
-        self.control_in_path = os.path.abspath(control_in_path) if control_in_path else ""
+        self.vars_out_path = os.path.abspath(vars_out_path) if vars_out_path else ""
+        self.vars_pipe_path = os.path.abspath(vars_pipe_path) if vars_pipe_path else ""
+        self.control_pipe_path = os.path.abspath(control_pipe_path) if control_pipe_path else ""
         self.last_payload = None
-        self.control_offset = 0
-        self.control_residue = ""
-        os.makedirs(os.path.dirname(vars_out_path), exist_ok=True)
-        self.stream = open(vars_out_path, "a", encoding="utf-8", buffering=1)
-        if self.control_in_path:
-            os.makedirs(os.path.dirname(self.control_in_path), exist_ok=True)
-            open(self.control_in_path, "a", encoding="utf-8").close()
+        self.control_queue: SimpleQueue[Dict[str, Any]] = SimpleQueue()
+        self.control_thread = None
+        self.stream = None
+        if self.vars_pipe_path:
+            self.stream = open(self.vars_pipe_path, "w", encoding="utf-8", buffering=1)
+        elif self.vars_out_path:
+            os.makedirs(os.path.dirname(self.vars_out_path), exist_ok=True)
+            self.stream = open(self.vars_out_path, "a", encoding="utf-8", buffering=1)
+        if self.control_pipe_path:
+            self.start_control_reader()
 
     def close(self) -> None:
         try:
-            self.stream.close()
+            if self.stream:
+                self.stream.close()
         except Exception:
             pass
 
@@ -81,50 +88,38 @@ class VarsEmitter:
         if payload == self.last_payload:
             return
         self.last_payload = payload
-        self.stream.write(json.dumps(payload, ensure_ascii=True) + "\n")
+        if self.stream:
+            self.stream.write(json.dumps(payload, ensure_ascii=True) + "\n")
 
-    def read_control_commands(self) -> List[Dict[str, Any]]:
-        if not self.control_in_path:
-            return []
-        try:
-            stats = os.stat(self.control_in_path)
-        except OSError:
-            return []
-        if stats.st_size <= self.control_offset:
-            return []
-        try:
-            with open(self.control_in_path, "r", encoding="utf-8") as handle:
-                handle.seek(self.control_offset)
-                chunk = handle.read()
-                self.control_offset = handle.tell()
-        except OSError:
-            return []
-        if not chunk:
-            return []
-        joined = f"{self.control_residue}{chunk}"
-        lines = joined.splitlines()
-        if joined and not joined.endswith("\n"):
-            self.control_residue = lines.pop() if lines else joined
-        else:
-            self.control_residue = ""
-        commands: List[Dict[str, Any]] = []
-        for line in lines:
-            text = line.strip()
-            if not text:
-                continue
+    def start_control_reader(self) -> None:
+        if not self.control_pipe_path:
+            return
+        self.control_thread = threading.Thread(target=self.control_reader_loop, daemon=True)
+        self.control_thread.start()
+
+    def control_reader_loop(self) -> None:
+        while True:
             try:
-                cmd = json.loads(text)
-                if isinstance(cmd, dict):
-                    commands.append(cmd)
-            except json.JSONDecodeError:
+                with open(self.control_pipe_path, "r", encoding="utf-8") as control_stream:
+                    for line in control_stream:
+                        text = str(line or "").strip()
+                        if not text:
+                            continue
+                        try:
+                            payload = json.loads(text)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(payload, dict):
+                            self.control_queue.put(payload)
+            except Exception:
                 continue
-        return commands
 
     def apply_control_commands(self, frame: FrameType) -> None:
-        commands = self.read_control_commands()
-        if not commands:
-            return
-        for cmd in commands:
+        while True:
+            try:
+                cmd = self.control_queue.get_nowait()
+            except Empty:
+                break
             if cmd.get("type") != "set_value":
                 continue
             name = str(cmd.get("name") or "").strip()
@@ -144,8 +139,9 @@ class VarsEmitter:
 def main() -> int:
     parser = argparse.ArgumentParser(description="AutoWRX python runtime wrapper")
     parser.add_argument("--script", required=True, help="Python script path")
-    parser.add_argument("--vars-out", required=True, help="JSONL output path for vars snapshots")
-    parser.add_argument("--control-in", default="", help="JSONL input path for runtime control commands")
+    parser.add_argument("--vars-out", default="", help="JSONL output path for vars snapshots")
+    parser.add_argument("--vars-pipe", default="", help="FIFO pipe path for vars snapshots")
+    parser.add_argument("--control-pipe", default="", help="FIFO pipe path for runtime control commands")
     args = parser.parse_args()
 
     script_path = os.path.abspath(args.script)
@@ -158,8 +154,9 @@ def main() -> int:
 
     emitter = VarsEmitter(
         script_path=script_path,
-        vars_out_path=os.path.abspath(args.vars_out),
-        control_in_path=args.control_in,
+        vars_out_path=args.vars_out,
+        vars_pipe_path=args.vars_pipe,
+        control_pipe_path=args.control_pipe,
     )
     old_argv = sys.argv[:]
     try:

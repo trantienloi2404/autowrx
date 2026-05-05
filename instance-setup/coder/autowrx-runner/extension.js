@@ -4,13 +4,14 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const crypto = require('crypto');
+const { execFileSync } = require('child_process');
 
 const TERMINAL_NAME = 'AutoWRX Console';
 const RUNNER_RECONNECT_MS = 3000;
 const SHELL_INTEGRATION_WAIT_MS = 150;
 const SHELL_INTEGRATION_MAX_ATTEMPTS = 20;
 const LOCAL_FALLBACK_RUNNER_WS_URL = 'ws://127.0.0.1:3200/v2/system/coder/runner/ws';
-const VARS_STREAM_POLL_MS = 250;
+const VARS_EMIT_INTERVAL_MS = 1000;
 
 function activate(context) {
     console.log('AutoWRX runner extension is active');
@@ -56,8 +57,10 @@ class RunnerBridge {
         this.runnerKey = String(process.env.AUTOWRX_RUNNER_KEY || '').trim();
         this.outputTerminal = null;
         this.activeExecution = null;
-        this.varsStream = null;
-        this.pythonControlFilePath = null;
+        this.varsChannel = null;
+        this.pendingVarsPayload = null;
+        this.lastVarsSentAt = 0;
+        this.varsEmitTimer = null;
         this.disposables = [];
         this.setupTerminalHooks();
     }
@@ -162,7 +165,7 @@ class RunnerBridge {
         if (!command || typeof command !== 'string') return;
         const terminal = this.ensureTerminal();
         terminal.show(true);
-        this.stopVarsStream();
+        this.stopVarsChannel();
         let effectiveCommand = command;
         if (runKind === 'python-main') {
             effectiveCommand = this.buildPythonWrappedCommand(command);
@@ -210,36 +213,36 @@ class RunnerBridge {
             return command;
         }
 
-        const varsFilePath = path.join(
+        const varsPipePath = path.join(
             os.tmpdir(),
-            `autowrx-vars-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.jsonl`,
+            `autowrx-vars-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pipe`,
         );
-        const controlFilePath = path.join(
+        const controlPipePath = path.join(
             os.tmpdir(),
-            `autowrx-control-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.jsonl`,
+            `autowrx-control-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pipe`,
         );
         try {
-            fs.writeFileSync(controlFilePath, '', { flag: 'a' });
+            execFileSync('mkfifo', [varsPipePath]);
+            execFileSync('mkfifo', [controlPipePath]);
         } catch (error) {
             this.send({
                 type: 'run.error',
-                message: `failed to initialize python control file: ${error?.message || error}`,
+                message: `failed to initialize python pipes: ${error?.message || error}`,
                 at: new Date().toISOString(),
             });
             return command;
         }
-        this.pythonControlFilePath = controlFilePath;
-        this.startVarsStream(varsFilePath);
+        this.startVarsChannel(varsPipePath, controlPipePath);
 
         return [
             'python3 -u',
             `"${wrapperPath}"`,
             '--script',
             '"main.py"',
-            '--vars-out',
-            `"${varsFilePath}"`,
-            '--control-in',
-            `"${controlFilePath}"`,
+            '--vars-pipe',
+            `"${varsPipePath}"`,
+            '--control-pipe',
+            `"${controlPipePath}"`,
         ].join(' ');
     }
 
@@ -253,11 +256,12 @@ class RunnerBridge {
             value: data.value,
             at: new Date().toISOString(),
         };
-        if (!this.pythonControlFilePath) {
+        const controlPipePath = this.varsChannel?.controlPipePath;
+        if (!controlPipePath) {
             return;
         }
         try {
-            fs.appendFileSync(this.pythonControlFilePath, `${JSON.stringify(payload)}\n`);
+            fs.appendFileSync(controlPipePath, `${JSON.stringify(payload)}\n`);
         } catch (error) {
             this.send({
                 type: 'run.error',
@@ -267,45 +271,61 @@ class RunnerBridge {
         }
     }
 
-    startVarsStream(filePath) {
-        this.stopVarsStream();
-        this.varsStream = {
-            filePath,
-            offset: 0,
+    startVarsChannel(varsPipePath, controlPipePath) {
+        this.stopVarsChannel();
+        const readStream = fs.createReadStream(varsPipePath, { encoding: 'utf8' });
+        this.varsChannel = {
+            varsPipePath,
+            controlPipePath,
+            readStream,
             residue: '',
-            timer: null,
         };
-        this.varsStream.timer = setInterval(() => {
-            this.flushVarsStreamChunk();
-        }, VARS_STREAM_POLL_MS);
+        readStream.on('data', (chunk) => {
+            this.consumeVarsChunk(String(chunk || ''));
+        });
+        readStream.on('error', (error) => {
+            this.send({
+                type: 'run.error',
+                message: `vars pipe read failed: ${error?.message || error}`,
+                at: new Date().toISOString(),
+            });
+        });
+        readStream.on('end', () => {
+            this.emitPendingVarsIfDue(true);
+        });
     }
 
-    flushVarsStreamChunk() {
-        const state = this.varsStream;
-        if (!state || !state.filePath) return;
-        let stats = null;
-        try {
-            stats = fs.statSync(state.filePath);
-        } catch {
+    emitPendingVarsIfDue(force = false) {
+        const pending = this.pendingVarsPayload;
+        if (!pending) return;
+        const now = Date.now();
+        if (!force && now - this.lastVarsSentAt < VARS_EMIT_INTERVAL_MS) {
+            const waitMs = Math.max(1, VARS_EMIT_INTERVAL_MS - (now - this.lastVarsSentAt));
+            if (!this.varsEmitTimer) {
+                this.varsEmitTimer = setTimeout(() => {
+                    this.varsEmitTimer = null;
+                    this.emitPendingVarsIfDue();
+                }, waitMs);
+            }
             return;
         }
-        if (!stats || typeof stats.size !== 'number' || stats.size <= state.offset) return;
-        const byteLength = stats.size - state.offset;
-        let chunk = '';
-        try {
-            const fd = fs.openSync(state.filePath, 'r');
-            const buffer = Buffer.alloc(byteLength);
-            fs.readSync(fd, buffer, 0, byteLength, state.offset);
-            fs.closeSync(fd);
-            chunk = buffer.toString('utf8');
-            state.offset = stats.size;
-        } catch {
-            return;
-        }
+        this.send({
+            type: 'run.vars',
+            vars: pending.vars,
+            frame: pending.frame || null,
+            at: new Date().toISOString(),
+        });
+        this.pendingVarsPayload = null;
+        this.lastVarsSentAt = now;
+    }
+
+    consumeVarsChunk(chunk) {
+        const channel = this.varsChannel;
+        if (!channel) return;
         if (!chunk) return;
-        const joined = `${state.residue || ''}${chunk}`;
+        const joined = `${channel.residue || ''}${chunk}`;
         const lines = joined.split(/\r?\n/);
-        state.residue = lines.pop() || '';
+        channel.residue = lines.pop() || '';
 
         lines.forEach((line) => {
             const text = String(line || '').trim();
@@ -315,26 +335,42 @@ class RunnerBridge {
                 if (payload?.type !== 'vars.snapshot') return;
                 const vars = payload?.vars;
                 if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return;
-                this.send({
-                    type: 'run.vars',
+                this.pendingVarsPayload = {
                     vars,
                     frame: payload.frame || null,
-                    at: new Date().toISOString(),
-                });
+                };
             } catch {
                 // ignore malformed line
             }
         });
+        this.emitPendingVarsIfDue();
     }
 
-    stopVarsStream() {
-        const state = this.varsStream;
+    stopVarsChannel() {
+        const state = this.varsChannel;
         if (!state) return;
-        if (state.timer) {
-            clearInterval(state.timer);
+        this.emitPendingVarsIfDue(true);
+        if (this.varsEmitTimer) {
+            clearTimeout(this.varsEmitTimer);
+            this.varsEmitTimer = null;
         }
-        this.varsStream = null;
-        this.pythonControlFilePath = null;
+        try {
+            state.readStream?.destroy();
+        } catch {
+            // ignore
+        }
+        try {
+            if (state.varsPipePath) fs.unlinkSync(state.varsPipePath);
+        } catch {
+            // ignore
+        }
+        try {
+            if (state.controlPipePath) fs.unlinkSync(state.controlPipePath);
+        } catch {
+            // ignore
+        }
+        this.varsChannel = null;
+        this.pendingVarsPayload = null;
     }
 
     async waitForShellIntegration(terminal) {
@@ -385,8 +421,7 @@ class RunnerBridge {
         const ended = vscode.window.onDidEndTerminalShellExecution((event) => {
             if (!this.outputTerminal || event.terminal !== this.outputTerminal) return;
             if (this.activeExecution && event.execution !== this.activeExecution) return;
-            this.flushVarsStreamChunk();
-            this.stopVarsStream();
+            this.stopVarsChannel();
             this.send({
                 type: 'run.exit',
                 code: event.exitCode ?? null,
@@ -432,7 +467,7 @@ class RunnerBridge {
     }
 
     dispose() {
-        this.stopVarsStream();
+        this.stopVarsChannel();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;

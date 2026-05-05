@@ -18,25 +18,6 @@ const memoryState = new Map();
 
 const nowIso = () => new Date().toISOString();
 
-const parseNdjsonObjects = (content) => {
-  if (!content || typeof content !== 'string') return {};
-  const patch = {};
-  const lines = content.split(/\r?\n/);
-  lines.forEach((line) => {
-    const t = String(line || '').trim();
-    if (!t.startsWith('{')) return;
-    try {
-      const obj = JSON.parse(t);
-      if (obj && typeof obj === 'object' && !Array.isArray(obj)) {
-        Object.assign(patch, obj);
-      }
-    } catch {
-      // ignore malformed NDJSON line
-    }
-  });
-  return patch;
-};
-
 const ensureAppLogSize = (text) => {
   const value = String(text || '');
   if (Buffer.byteLength(value, 'utf8') <= MAX_APP_LOG_BYTES) return value;
@@ -81,13 +62,6 @@ const setStatus = (workspaceId, status) => {
   entry.updatedAt = nowIso();
 };
 
-const mergeSignals = (workspaceId, patch) => {
-  const entries = Object.entries(patch || {});
-  if (entries.length === 0) return;
-  const entry = ensureMemoryEntry(workspaceId);
-  entry.signals = { ...(entry.signals || {}), ...patch };
-};
-
 const ingestRunnerPayload = async (workspaceId, payload) => {
   if (!workspaceId || !payload || typeof payload !== 'object') return;
   cleanupExpiredMemory();
@@ -97,8 +71,6 @@ const ingestRunnerPayload = async (workspaceId, payload) => {
   if (type === 'run.output') {
     const text = String(payload.data || '');
     if (text) {
-      const patch = parseNdjsonObjects(text);
-      mergeSignals(workspaceId, patch);
       appendToAppLog(workspaceId, text);
     }
     setStatus(workspaceId, 'running');

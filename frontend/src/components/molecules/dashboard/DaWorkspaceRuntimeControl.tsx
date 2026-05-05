@@ -8,7 +8,7 @@
 
 /**
  * Sidebar runtime panel: Coder workspace only (no hardware kit / DaRuntimeConnector).
- * Streams run output over WebSocket and merges NDJSON into workspaceRuntimeStore.
+ * Streams run output over WebSocket and renders terminal output/state.
  */
 
 import { FC, useEffect, useRef } from 'react'

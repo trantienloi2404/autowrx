@@ -38,33 +38,6 @@ export type WorkspaceRunUiStatus =
 const RUNNER_WS_RECONNECT_MS = 1200
 const OUTPUT_TAB = 'output'
 
-function patchApisFromNdjsonContent(
-  content: string,
-  setActiveApis: (v: Record<string, unknown>) => void,
-) {
-  if (!content?.trim()) return
-  const lines = content.split(/\r?\n/)
-  let patch: Record<string, unknown> = {}
-  for (const line of lines) {
-    const t = line.trim()
-    if (!t.startsWith('{')) continue
-    try {
-      const o = JSON.parse(t) as unknown
-      if (o && typeof o === 'object' && !Array.isArray(o)) {
-        patch = { ...patch, ...(o as Record<string, unknown>) }
-      }
-    } catch {
-      // skip non-JSON lines
-    }
-  }
-  if (Object.keys(patch).length === 0) return
-  const prev =
-    (useWorkspaceRuntimeStore.getState().apisValue as
-      | Record<string, unknown>
-      | undefined) || {}
-  setActiveApis({ ...prev, ...patch })
-}
-
 const toWsBase = (baseUrl: string) => {
   if (baseUrl.startsWith('https://')) return baseUrl.replace('https://', 'wss://')
   if (baseUrl.startsWith('http://')) return baseUrl.replace('http://', 'ws://')
@@ -121,9 +94,8 @@ export default function useWorkspaceRuntimeControl() {
       if (!text) return
       setVscodeRunOutput((prev) => prev + text)
       setAppLog((useWorkspaceRuntimeStore.getState().appLog || '') + text)
-      patchApisFromNdjsonContent(text, setActiveApis)
     },
-    [setActiveApis, setAppLog],
+    [setAppLog],
   )
 
   const writeSignalValue = useCallback(

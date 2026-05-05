@@ -1,11 +1,16 @@
 const vscode = require('vscode');
 const WebSocket = require('ws');
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
 
 const TERMINAL_NAME = 'AutoWRX Console';
 const RUNNER_RECONNECT_MS = 3000;
 const SHELL_INTEGRATION_WAIT_MS = 150;
 const SHELL_INTEGRATION_MAX_ATTEMPTS = 20;
 const LOCAL_FALLBACK_RUNNER_WS_URL = 'ws://127.0.0.1:3200/v2/system/coder/runner/ws';
+const VARS_STREAM_POLL_MS = 250;
 
 function activate(context) {
     console.log('AutoWRX runner extension is active');
@@ -51,6 +56,7 @@ class RunnerBridge {
         this.runnerKey = String(process.env.AUTOWRX_RUNNER_KEY || '').trim();
         this.outputTerminal = null;
         this.activeExecution = null;
+        this.varsStream = null;
         this.disposables = [];
         this.setupTerminalHooks();
     }
@@ -152,17 +158,22 @@ class RunnerBridge {
         if (!command || typeof command !== 'string') return;
         const terminal = this.ensureTerminal();
         terminal.show(true);
+        this.stopVarsStream();
+        let effectiveCommand = command;
+        if (runKind === 'python-main') {
+            effectiveCommand = this.buildPythonWrappedCommand(command);
+        }
         this.send({
             type: 'run.started',
             runKind: runKind || null,
-            command,
+            command: effectiveCommand,
             at: new Date().toISOString(),
         });
 
         const integration = await this.waitForShellIntegration(terminal);
         if (integration && typeof integration.executeCommand === 'function') {
             try {
-                const execution = integration.executeCommand(command);
+                const execution = integration.executeCommand(effectiveCommand);
                 this.activeExecution = execution;
                 this.captureExecutionOutput(execution);
                 return;
@@ -181,7 +192,103 @@ class RunnerBridge {
             at: new Date().toISOString(),
         });
         // Last-resort fallback when shell integration is unavailable.
-        terminal.sendText(command, true);
+        terminal.sendText(effectiveCommand, true);
+    }
+
+    buildPythonWrappedCommand(command) {
+        const wrapperPath = path.join(__dirname, 'python', 'autowrx_python_wrapper.py');
+        if (!fs.existsSync(wrapperPath)) {
+            this.send({
+                type: 'run.error',
+                message: 'python wrapper script is missing; running original command',
+                at: new Date().toISOString(),
+            });
+            return command;
+        }
+
+        const varsFilePath = path.join(
+            os.tmpdir(),
+            `autowrx-vars-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.jsonl`,
+        );
+        this.startVarsStream(varsFilePath);
+
+        return [
+            'python3 -u',
+            `"${wrapperPath}"`,
+            '--script',
+            '"main.py"',
+            '--vars-out',
+            `"${varsFilePath}"`,
+        ].join(' ');
+    }
+
+    startVarsStream(filePath) {
+        this.stopVarsStream();
+        this.varsStream = {
+            filePath,
+            offset: 0,
+            residue: '',
+            timer: null,
+        };
+        this.varsStream.timer = setInterval(() => {
+            this.flushVarsStreamChunk();
+        }, VARS_STREAM_POLL_MS);
+    }
+
+    flushVarsStreamChunk() {
+        const state = this.varsStream;
+        if (!state || !state.filePath) return;
+        let stats = null;
+        try {
+            stats = fs.statSync(state.filePath);
+        } catch {
+            return;
+        }
+        if (!stats || typeof stats.size !== 'number' || stats.size <= state.offset) return;
+        const byteLength = stats.size - state.offset;
+        let chunk = '';
+        try {
+            const fd = fs.openSync(state.filePath, 'r');
+            const buffer = Buffer.alloc(byteLength);
+            fs.readSync(fd, buffer, 0, byteLength, state.offset);
+            fs.closeSync(fd);
+            chunk = buffer.toString('utf8');
+            state.offset = stats.size;
+        } catch {
+            return;
+        }
+        if (!chunk) return;
+        const joined = `${state.residue || ''}${chunk}`;
+        const lines = joined.split(/\r?\n/);
+        state.residue = lines.pop() || '';
+
+        lines.forEach((line) => {
+            const text = String(line || '').trim();
+            if (!text) return;
+            try {
+                const payload = JSON.parse(text);
+                if (payload?.type !== 'vars.snapshot') return;
+                const vars = payload?.vars;
+                if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return;
+                this.send({
+                    type: 'run.vars',
+                    vars,
+                    frame: payload.frame || null,
+                    at: new Date().toISOString(),
+                });
+            } catch {
+                // ignore malformed line
+            }
+        });
+    }
+
+    stopVarsStream() {
+        const state = this.varsStream;
+        if (!state) return;
+        if (state.timer) {
+            clearInterval(state.timer);
+        }
+        this.varsStream = null;
     }
 
     async waitForShellIntegration(terminal) {
@@ -232,6 +339,8 @@ class RunnerBridge {
         const ended = vscode.window.onDidEndTerminalShellExecution((event) => {
             if (!this.outputTerminal || event.terminal !== this.outputTerminal) return;
             if (this.activeExecution && event.execution !== this.activeExecution) return;
+            this.flushVarsStreamChunk();
+            this.stopVarsStream();
             this.send({
                 type: 'run.exit',
                 code: event.exitCode ?? null,
@@ -277,6 +386,7 @@ class RunnerBridge {
     }
 
     dispose() {
+        this.stopVarsStream();
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer);
             this.reconnectTimer = null;

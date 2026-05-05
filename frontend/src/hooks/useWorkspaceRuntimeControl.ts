@@ -324,6 +324,13 @@ export default function useWorkspaceRuntimeControl() {
               }
               return
             }
+            case 'run.vars': {
+              const varsPatch = payload.vars
+              if (varsPatch && typeof varsPatch === 'object' && !Array.isArray(varsPatch)) {
+                writeVarsValue(varsPatch as Record<string, unknown>)
+              }
+              return
+            }
             case 'run.error': {
               const message = String(
                 payload.message || payload.error || payload.data || 'Runner error',
@@ -375,6 +382,7 @@ export default function useWorkspaceRuntimeControl() {
     setActiveApis,
     setAppLog,
     setTraceVars,
+    writeVarsValue,
   ])
 
   const outputPanelText = useMemo(() => {

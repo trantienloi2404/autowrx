@@ -56,6 +56,14 @@ const appendToAppLog = (workspaceId, text) => {
   entry.appLog = ensureAppLogSize(`${entry.appLog || ''}${text}`);
 };
 
+const mergeTraceVars = (workspaceId, patch) => {
+  const entries = Object.entries(patch || {});
+  if (entries.length === 0) return;
+  const entry = ensureMemoryEntry(workspaceId);
+  entry.traceVars = { ...(entry.traceVars || {}), ...patch };
+  entry.updatedAt = nowIso();
+};
+
 const setStatus = (workspaceId, status) => {
   const entry = ensureMemoryEntry(workspaceId);
   entry.status = String(status || '');
@@ -74,6 +82,13 @@ const ingestRunnerPayload = async (workspaceId, payload) => {
       appendToAppLog(workspaceId, text);
     }
     setStatus(workspaceId, 'running');
+    return;
+  }
+  if (type === 'run.vars') {
+    const varsPatch = payload.vars;
+    if (varsPatch && typeof varsPatch === 'object' && !Array.isArray(varsPatch)) {
+      mergeTraceVars(workspaceId, varsPatch);
+    }
     return;
   }
   if (type === 'run.waiting_input') {

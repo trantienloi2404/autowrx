@@ -57,6 +57,7 @@ class RunnerBridge {
         this.outputTerminal = null;
         this.activeExecution = null;
         this.varsStream = null;
+        this.pythonControlFilePath = null;
         this.disposables = [];
         this.setupTerminalHooks();
     }
@@ -149,6 +150,9 @@ class RunnerBridge {
             case 'run.stop':
                 this.stopRun();
                 break;
+            case 'run.set_value':
+                this.setRuntimeValue(payload.data);
+                break;
             default:
                 break;
         }
@@ -210,6 +214,21 @@ class RunnerBridge {
             os.tmpdir(),
             `autowrx-vars-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.jsonl`,
         );
+        const controlFilePath = path.join(
+            os.tmpdir(),
+            `autowrx-control-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.jsonl`,
+        );
+        try {
+            fs.writeFileSync(controlFilePath, '', { flag: 'a' });
+        } catch (error) {
+            this.send({
+                type: 'run.error',
+                message: `failed to initialize python control file: ${error?.message || error}`,
+                at: new Date().toISOString(),
+            });
+            return command;
+        }
+        this.pythonControlFilePath = controlFilePath;
         this.startVarsStream(varsFilePath);
 
         return [
@@ -219,7 +238,33 @@ class RunnerBridge {
             '"main.py"',
             '--vars-out',
             `"${varsFilePath}"`,
+            '--control-in',
+            `"${controlFilePath}"`,
         ].join(' ');
+    }
+
+    setRuntimeValue(data) {
+        if (!data || typeof data !== 'object') return;
+        const api = String(data.api || '').trim();
+        if (!api) return;
+        const payload = {
+            type: 'set_value',
+            name: api,
+            value: data.value,
+            at: new Date().toISOString(),
+        };
+        if (!this.pythonControlFilePath) {
+            return;
+        }
+        try {
+            fs.appendFileSync(this.pythonControlFilePath, `${JSON.stringify(payload)}\n`);
+        } catch (error) {
+            this.send({
+                type: 'run.error',
+                message: `run.set_value failed: ${error?.message || error}`,
+                at: new Date().toISOString(),
+            });
+        }
     }
 
     startVarsStream(filePath) {
@@ -289,6 +334,7 @@ class RunnerBridge {
             clearInterval(state.timer);
         }
         this.varsStream = null;
+        this.pythonControlFilePath = null;
     }
 
     async waitForShellIntegration(terminal) {

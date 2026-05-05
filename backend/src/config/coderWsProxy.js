@@ -302,7 +302,7 @@ const init = (httpServer) => {
             if (!raw) return;
             const payload = JSON.parse(raw);
             if (!payload || typeof payload !== 'object') return;
-            const allowedClientTypes = new Set(['run.stdin', 'run.stop']);
+            const allowedClientTypes = new Set(['run.stdin', 'run.stop', 'run.set_value']);
             if (!allowedClientTypes.has(payload.type)) return;
             workspaceRunWsHub.sendToRunners(workspaceId, {
               ...payload,

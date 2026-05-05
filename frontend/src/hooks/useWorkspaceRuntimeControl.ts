@@ -131,6 +131,22 @@ export default function useWorkspaceRuntimeControl() {
     return true
   }, [])
 
+  const requestWriteSignalValue = useCallback(
+    (obj: Record<string, unknown> | null | undefined) => {
+      if (!obj || typeof obj !== 'object') return
+      const entries = Object.entries(obj)
+      if (entries.length === 0) return
+      entries.forEach(([api, value]) => {
+        void sendRunWsMessage({
+          type: 'run.set_value',
+          data: { api, value },
+        })
+      })
+      writeSignalValue(obj)
+    },
+    [sendRunWsMessage, writeSignalValue],
+  )
+
   const clearOutput = useCallback(() => {
     setVscodeRunOutput('')
   }, [])
@@ -213,8 +229,7 @@ export default function useWorkspaceRuntimeControl() {
       try {
         const payload = typeof e.data === 'string' ? JSON.parse(e.data) : e.data
         if (payload?.cmd === 'set-api-value' && payload.api !== undefined) {
-          writeSignalValue({ [String(payload.api)]: payload.value })
-          writeVarsValue({ [String(payload.api)]: payload.value })
+          requestWriteSignalValue({ [String(payload.api)]: payload.value })
         }
       } catch {
         // ignore malformed messages
@@ -225,7 +240,7 @@ export default function useWorkspaceRuntimeControl() {
     return () => {
       window.removeEventListener('message', handleMessageListener)
     }
-  }, [writeSignalValue, writeVarsValue])
+  }, [requestWriteSignalValue])
 
   useEffect(() => {
     if (!prototypeIdForCoder || !isAuthorized || !accessToken) return
@@ -429,7 +444,7 @@ export default function useWorkspaceRuntimeControl() {
     handleRun,
     submitStdinLine,
     stopRun,
-    writeSignalValue,
+    requestWriteSignalValue,
     writeVarsValue,
   }
 }

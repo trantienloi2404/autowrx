@@ -53,7 +53,7 @@ const DaWorkspaceRuntimeControl: FC = () => {
     handleRun,
     submitStdinLine,
     stopRun,
-    writeSignalValue,
+    requestWriteSignalValue,
     writeVarsValue,
   } = useWorkspaceRuntimeControl()
 
@@ -113,7 +113,7 @@ const DaWorkspaceRuntimeControl: FC = () => {
             {activeTab === 'apis' && (
               <DaWorkspaceApisWatch
                 requestWriteSignalValue={(obj: Record<string, unknown>) => {
-                  writeSignalValue(obj)
+                  requestWriteSignalValue(obj)
                 }}
               />
             )}

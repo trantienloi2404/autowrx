@@ -12,6 +12,7 @@ const SHELL_INTEGRATION_WAIT_MS = 150;
 const SHELL_INTEGRATION_MAX_ATTEMPTS = 20;
 const LOCAL_FALLBACK_RUNNER_WS_URL = 'ws://127.0.0.1:3200/v2/system/coder/runner/ws';
 const VARS_EMIT_INTERVAL_MS = 1000;
+const CONTROL_WRITE_GUARD_MS = 3000;
 
 function activate(context) {
     console.log('AutoWRX runner extension is active');
@@ -61,6 +62,7 @@ class RunnerBridge {
         this.pendingVarsPayload = null;
         this.lastVarsSentAt = 0;
         this.varsEmitTimer = null;
+        this.recentRuntimeWrites = new Map();
         this.disposables = [];
         this.setupTerminalHooks();
     }
@@ -166,6 +168,7 @@ class RunnerBridge {
         const terminal = this.ensureTerminal();
         terminal.show(true);
         this.stopVarsChannel();
+        this.recentRuntimeWrites.clear();
         let effectiveCommand = command;
         if (runKind === 'python-main') {
             effectiveCommand = this.buildPythonWrappedCommand(command);
@@ -250,10 +253,11 @@ class RunnerBridge {
         if (!data || typeof data !== 'object') return;
         const api = String(data.api || '').trim();
         if (!api) return;
+        const normalizedValue = this.normalizeRuntimeValue(data.value);
         const payload = {
             type: 'set_value',
             name: api,
-            value: data.value,
+            value: normalizedValue,
             at: new Date().toISOString(),
         };
         const controlPipePath = this.varsChannel?.controlPipePath;
@@ -262,6 +266,16 @@ class RunnerBridge {
         }
         try {
             fs.appendFileSync(controlPipePath, `${JSON.stringify(payload)}\n`);
+            this.recentRuntimeWrites.set(api, {
+                value: normalizedValue,
+                atMs: Date.now(),
+            });
+            // If a stale payload is already queued for throttled emission, patch it now.
+            if (this.pendingVarsPayload?.vars && typeof this.pendingVarsPayload.vars === 'object') {
+                this.pendingVarsPayload.vars[api] = normalizedValue;
+            }
+            // Flush immediately so UI sees the user write before any delayed stale frame.
+            this.emitPendingVarsIfDue(true);
         } catch (error) {
             this.send({
                 type: 'run.error',
@@ -298,6 +312,7 @@ class RunnerBridge {
     emitPendingVarsIfDue(force = false) {
         const pending = this.pendingVarsPayload;
         if (!pending) return;
+        this.applyRecentWriteGuard(pending.vars);
         const now = Date.now();
         if (!force && now - this.lastVarsSentAt < VARS_EMIT_INTERVAL_MS) {
             const waitMs = Math.max(1, VARS_EMIT_INTERVAL_MS - (now - this.lastVarsSentAt));
@@ -335,6 +350,7 @@ class RunnerBridge {
                 if (payload?.type !== 'vars.snapshot') return;
                 const vars = payload?.vars;
                 if (!vars || typeof vars !== 'object' || Array.isArray(vars)) return;
+                this.applyRecentWriteGuard(vars);
                 this.pendingVarsPayload = {
                     vars,
                     frame: payload.frame || null,
@@ -371,6 +387,43 @@ class RunnerBridge {
         }
         this.varsChannel = null;
         this.pendingVarsPayload = null;
+        this.recentRuntimeWrites.clear();
+    }
+
+    normalizeRuntimeValue(value) {
+        if (typeof value !== 'string') return value;
+        const low = value.trim().toLowerCase();
+        if (low === 'true') return true;
+        if (low === 'false') return false;
+        if (low === 'null' || low === 'none' || low === 'nil') return null;
+        return value;
+    }
+
+    valuesEqual(a, b) {
+        if (Object.is(a, b)) return true;
+        try {
+            return JSON.stringify(a) === JSON.stringify(b);
+        } catch {
+            return false;
+        }
+    }
+
+    applyRecentWriteGuard(vars) {
+        if (!vars || typeof vars !== 'object') return;
+        const now = Date.now();
+        for (const [name, info] of this.recentRuntimeWrites.entries()) {
+            if (!info || now - info.atMs > CONTROL_WRITE_GUARD_MS) {
+                this.recentRuntimeWrites.delete(name);
+                continue;
+            }
+            if (!(name in vars)) continue;
+            if (this.valuesEqual(vars[name], info.value)) {
+                this.recentRuntimeWrites.delete(name);
+                continue;
+            }
+            // Prevent stale snapshots from briefly overriding user-controlled values.
+            vars[name] = info.value;
+        }
     }
 
     async waitForShellIntegration(terminal) {

@@ -102,6 +102,7 @@ class VarsEmitter:
         self.control_pipe_path = os.path.abspath(control_pipe_path) if control_pipe_path else ""
         self.allowed_var_names = set(allowed_var_names or []) if allowed_var_names is not None else None
         self.last_payload = None
+        self.last_line_by_frame: Dict[int, int] = {}
         self.control_queue: SimpleQueue[Dict[str, Any]] = SimpleQueue()
         self.control_thread = None
         self.stream = None
@@ -192,10 +193,30 @@ class VarsEmitter:
             frame.f_globals[name] = value
             frame.f_locals[name] = value
 
+    def should_apply_control_now(self, frame: FrameType) -> bool:
+        """
+        Apply control writes at control-flow boundaries to avoid mid-block races.
+        For long-running loops this means updates are applied at loop boundaries
+        (when execution jumps backwards), keeping related lines consistent.
+        """
+        filename = os.path.abspath(frame.f_code.co_filename or "")
+        if filename != self.script_path:
+            return False
+        frame_id = id(frame)
+        line_no = int(getattr(frame, "f_lineno", 0) or 0)
+        prev_line = self.last_line_by_frame.get(frame_id)
+        self.last_line_by_frame[frame_id] = line_no
+        if prev_line is None:
+            return True
+        return line_no <= prev_line
+
     def tracer(self, frame: FrameType, event: str, arg: Any):
         if event == "line":
-            self.apply_control_commands(frame)
+            if self.should_apply_control_now(frame):
+                self.apply_control_commands(frame)
             self.emit(frame)
+        elif event == "return":
+            self.last_line_by_frame.pop(id(frame), None)
         return self.tracer
 
 

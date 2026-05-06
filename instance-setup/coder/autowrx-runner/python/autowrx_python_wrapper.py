@@ -12,7 +12,7 @@ from types import FrameType
 from typing import Any, Dict
 
 
-MAX_DEPTH = 1
+MAX_DEPTH = 5
 MAX_ITEMS = 50
 
 
@@ -69,6 +69,22 @@ def sanitize_value(value: Any, depth: int = 0) -> Any:
         return out
 
     return repr(value)
+
+
+def normalize_control_value(value: Any) -> Any:
+    """
+    Widgets / postMessage often send booleans as strings. In Python, any non-empty
+    string is truthy, so if DEF == "False", ``if DEF`` still runs the true branch.
+    """
+    if isinstance(value, str):
+        low = value.strip().lower()
+        if low == "true":
+            return True
+        if low == "false":
+            return False
+        if low in ("null", "none", "nil"):
+            return None
+    return value
 
 
 class VarsEmitter:
@@ -158,6 +174,10 @@ class VarsEmitter:
                 continue
 
     def apply_control_commands(self, frame: FrameType) -> None:
+        # Runs on sys.settrace "line" events, which fire *before* that line executes.
+        # Widget updates can therefore change globals between consecutive statements.
+        # If you assign status from DEF on one line and print DEF on the next, the two
+        # lines can observe different DEF — use one line or read DEF once into locals.
         while True:
             try:
                 cmd = self.control_queue.get_nowait()
@@ -168,7 +188,7 @@ class VarsEmitter:
             name = str(cmd.get("name") or "").strip()
             if not name:
                 continue
-            value = cmd.get("value")
+            value = normalize_control_value(cmd.get("value"))
             frame.f_globals[name] = value
             frame.f_locals[name] = value
 

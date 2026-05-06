@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import argparse
+import ast
 import json
 import os
 import runpy
@@ -11,8 +12,40 @@ from types import FrameType
 from typing import Any, Dict
 
 
-MAX_DEPTH = 3
+MAX_DEPTH = 1
 MAX_ITEMS = 50
+
+
+def collect_top_level_assigned_names(script_path: str):
+    """
+    Collect names assigned directly at module top-level.
+    Excludes assignments nested inside while/for/if/try/functions/classes.
+    """
+    try:
+        with open(script_path, "r", encoding="utf-8") as src:
+            tree = ast.parse(src.read(), filename=script_path)
+    except Exception:
+        return None
+
+    names = set()
+
+    def add_target(target):
+        if isinstance(target, ast.Name):
+            names.add(target.id)
+        elif isinstance(target, (ast.Tuple, ast.List)):
+            for elt in target.elts:
+                add_target(elt)
+
+    for stmt in getattr(tree, "body", []):
+        if isinstance(stmt, ast.Assign):
+            for target in stmt.targets:
+                add_target(target)
+        elif isinstance(stmt, ast.AnnAssign):
+            add_target(stmt.target)
+        elif isinstance(stmt, ast.AugAssign):
+            add_target(stmt.target)
+
+    return names
 
 
 def sanitize_value(value: Any, depth: int = 0) -> Any:
@@ -39,11 +72,19 @@ def sanitize_value(value: Any, depth: int = 0) -> Any:
 
 
 class VarsEmitter:
-    def __init__(self, script_path: str, vars_out_path: str = "", vars_pipe_path: str = "", control_pipe_path: str = ""):
+    def __init__(
+        self,
+        script_path: str,
+        vars_out_path: str = "",
+        vars_pipe_path: str = "",
+        control_pipe_path: str = "",
+        allowed_var_names=None,
+    ):
         self.script_path = os.path.abspath(script_path)
         self.vars_out_path = os.path.abspath(vars_out_path) if vars_out_path else ""
         self.vars_pipe_path = os.path.abspath(vars_pipe_path) if vars_pipe_path else ""
         self.control_pipe_path = os.path.abspath(control_pipe_path) if control_pipe_path else ""
+        self.allowed_var_names = set(allowed_var_names or []) if allowed_var_names is not None else None
         self.last_payload = None
         self.control_queue: SimpleQueue[Dict[str, Any]] = SimpleQueue()
         self.control_thread = None
@@ -72,6 +113,8 @@ class VarsEmitter:
         vars_payload: Dict[str, Any] = {}
         for name, value in raw_locals.items():
             if name.startswith("__"):
+                continue
+            if self.allowed_var_names is not None and name not in self.allowed_var_names:
                 continue
             vars_payload[name] = sanitize_value(value)
 
@@ -157,6 +200,7 @@ def main() -> int:
         vars_out_path=args.vars_out,
         vars_pipe_path=args.vars_pipe,
         control_pipe_path=args.control_pipe,
+        allowed_var_names=collect_top_level_assigned_names(script_path),
     )
     old_argv = sys.argv[:]
     try:

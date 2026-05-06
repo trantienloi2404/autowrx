@@ -64,6 +64,16 @@ const mergeApisValue = (workspaceId, patch) => {
   entry.updatedAt = nowIso();
 };
 
+const mapVarsPatchToApiNamespace = (varsPatch) => {
+  const out = {};
+  Object.entries(varsPatch || {}).forEach(([name, value]) => {
+    const cleanName = String(name || '').trim();
+    if (!cleanName) return;
+    out[`vars.${cleanName}`] = value;
+  });
+  return out;
+};
+
 const setStatus = (workspaceId, status) => {
   const entry = ensureMemoryEntry(workspaceId);
   entry.status = String(status || '');
@@ -87,7 +97,7 @@ const ingestRunnerPayload = async (workspaceId, payload) => {
   if (type === 'run.vars') {
     const varsPatch = payload.vars;
     if (varsPatch && typeof varsPatch === 'object' && !Array.isArray(varsPatch)) {
-      mergeApisValue(workspaceId, varsPatch);
+      mergeApisValue(workspaceId, mapVarsPatchToApiNamespace(varsPatch));
     }
     return;
   }

@@ -44,6 +44,22 @@ const toWsBase = (baseUrl: string) => {
   return `${window.location.protocol === 'https:' ? 'wss://' : 'ws://'}${window.location.host}`
 }
 
+const toVarsApiNamespace = (obj: Record<string, unknown> | null | undefined) => {
+  const out: Record<string, unknown> = {}
+  if (!obj || typeof obj !== 'object') return out
+  Object.entries(obj).forEach(([key, value]) => {
+    const cleanKey = String(key || '').trim()
+    if (!cleanKey) return
+    out[`vars.${cleanKey}`] = value
+  })
+  return out
+}
+
+const toRuntimeVarName = (apiName: string) => {
+  const key = String(apiName || '').trim()
+  return key.startsWith('vars.') ? key.slice('vars.'.length) : key
+}
+
 const notifyWidgetIframes = (data: unknown) => {
   const iframes = document.querySelectorAll('iframe')
   iframes.forEach((iframe) => {
@@ -137,9 +153,11 @@ export default function useWorkspaceRuntimeControl() {
       const entries = Object.entries(obj)
       if (entries.length === 0) return
       entries.forEach(([api, value]) => {
+        const runtimeVarName = toRuntimeVarName(api)
+        if (!runtimeVarName) return
         void sendRunWsMessage({
           type: 'run.set_value',
-          data: { api, value },
+          data: { api: runtimeVarName, value },
         })
       })
       writeSignalValue(obj)
@@ -342,7 +360,7 @@ export default function useWorkspaceRuntimeControl() {
             case 'run.vars': {
               const varsPatch = payload.vars
               if (varsPatch && typeof varsPatch === 'object' && !Array.isArray(varsPatch)) {
-                writeSignalValue(varsPatch as Record<string, unknown>)
+                writeSignalValue(toVarsApiNamespace(varsPatch as Record<string, unknown>))
               }
               return
             }

@@ -109,6 +109,23 @@ const getHeadersWithToken = (sessionToken) => {
   };
 };
 
+const isUserScopedTokenValid = async (sessionToken) => {
+  if (!sessionToken) return false;
+  try {
+    await axios.get(`${getCoderApiBase()}/users/me`, {
+      headers: getHeadersWithToken(sessionToken),
+    });
+    return true;
+  } catch (error) {
+    const status = error?.response?.status;
+    if (status === httpStatus.UNAUTHORIZED || status === httpStatus.FORBIDDEN) {
+      return false;
+    }
+    // For transient/network errors, keep cached token to avoid unnecessary remint.
+    return true;
+  }
+};
+
 const TOKEN_LIFETIME_DURATION = '168h'; // 7d
 const TOKEN_REUSE_BUFFER_MS = 5 * 60 * 1000;
 const TOKEN_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
@@ -181,7 +198,14 @@ const getOrCreateUserScopedToken = async (user, options = {}) => {
     Number.isFinite(tokenExpiresAtMs) &&
     tokenExpiresAtMs > now + TOKEN_REUSE_BUFFER_MS
   ) {
-    return user.coder_scoped_token.trim();
+    const cachedToken = user.coder_scoped_token.trim();
+    const isValid = await isUserScopedTokenValid(cachedToken);
+    if (isValid) {
+      return cachedToken;
+    }
+    logger.warn(
+      `Cached Coder scoped token is no longer valid for user ${user.coder_username}; regenerating.`,
+    );
   }
 
   const token = await generateSessionToken(user.coder_username, { workspaceId, coderUserId });

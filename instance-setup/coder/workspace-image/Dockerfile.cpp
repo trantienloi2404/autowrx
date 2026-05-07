@@ -5,7 +5,7 @@ USER root
 RUN set -eux; \
   apt-get update -qq; \
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends \
-  build-essential gcc g++ cmake \
+  build-essential gcc g++ cmake gdb \
   curl \
   rsync ca-certificates; \
   apt-get clean; \

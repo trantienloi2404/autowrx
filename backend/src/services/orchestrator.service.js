@@ -344,8 +344,7 @@ const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
 /** Server-side only: maps client runKind to shell command (never accept raw command from client). */
 const RUN_KIND_COMMANDS = {
   'python-main': 'python3 -u main.py',
-  'c-main': 'gcc main.c -o main && ./main',
-  'cpp-main': 'g++ -o main -Iinclude src/*.cpp && ./main',
+  'cpp-main': 'g++ -g -O0 -o main -Iinclude src/*.cpp && ./main',
   'rust-main': 'cargo run',
 };
 

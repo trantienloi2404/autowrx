@@ -172,6 +172,8 @@ class RunnerBridge {
         let effectiveCommand = command;
         if (runKind === 'python-main') {
             effectiveCommand = this.buildPythonWrappedCommand(command);
+        } else if (runKind === 'cpp-main') {
+            effectiveCommand = this.buildCppWrappedCommand(command);
         }
         this.send({
             type: 'run.started',
@@ -247,6 +249,61 @@ class RunnerBridge {
             '--control-pipe',
             `"${controlPipePath}"`,
         ].join(' ');
+    }
+
+    buildCppWrappedCommand(command) {
+        const wrapperPath = path.join(__dirname, 'cpp', 'autowrx_cpp_gdb_wrapper.js');
+        if (!fs.existsSync(wrapperPath)) {
+            this.send({
+                type: 'run.error',
+                message: 'cpp gdb wrapper script is missing; running original command',
+                at: new Date().toISOString(),
+            });
+            return command;
+        }
+
+        const varsPipePath = path.join(
+            os.tmpdir(),
+            `autowrx-vars-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pipe`,
+        );
+        const controlPipePath = path.join(
+            os.tmpdir(),
+            `autowrx-control-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pipe`,
+        );
+        try {
+            execFileSync('mkfifo', [varsPipePath]);
+            execFileSync('mkfifo', [controlPipePath]);
+        } catch (error) {
+            this.send({
+                type: 'run.error',
+                message: `failed to initialize cpp pipes: ${error?.message || error}`,
+                at: new Date().toISOString(),
+            });
+            return command;
+        }
+        this.startVarsChannel(varsPipePath, controlPipePath);
+
+        const commandParts = String(command || '')
+            .split('&&')
+            .map((part) => part.trim())
+            .filter(Boolean);
+        const runPart = commandParts.length > 0 ? commandParts[commandParts.length - 1] : '';
+        const compilePart = commandParts.slice(0, -1).join(' && ');
+        const runParts = runPart.split(/\s+/).filter(Boolean);
+        const programPath = runParts[0] || './main';
+        const nodeBin = process.execPath || 'node';
+        const wrapperCommand = [
+            `"${nodeBin}"`,
+            `"${wrapperPath}"`,
+            '--program',
+            `"${programPath}"`,
+            '--vars-pipe',
+            `"${varsPipePath}"`,
+            '--control-pipe',
+            `"${controlPipePath}"`,
+        ].join(' ');
+        if (!compilePart) return wrapperCommand;
+        return `${compilePart} && ${wrapperCommand}`;
     }
 
     setRuntimeValue(data) {

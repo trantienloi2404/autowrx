@@ -174,6 +174,8 @@ class RunnerBridge {
             effectiveCommand = this.buildPythonWrappedCommand(command);
         } else if (runKind === 'cpp-main') {
             effectiveCommand = this.buildCppWrappedCommand(command);
+        } else if (runKind === 'rust-main') {
+            effectiveCommand = this.buildRustWrappedCommand(command);
         }
         this.send({
             type: 'run.started',
@@ -303,6 +305,76 @@ class RunnerBridge {
             `"${controlPipePath}"`,
         ].join(' ');
         if (!compilePart) return wrapperCommand;
+        return `${compilePart} && ${wrapperCommand}`;
+    }
+
+    getRustBinNameFromCargoToml(projectRoot) {
+        const cargoPath = path.join(projectRoot, 'Cargo.toml');
+        try {
+            const content = fs.readFileSync(cargoPath, 'utf8');
+            // Prefer the first [[bin]] definition if present.
+            const binMatch = content.match(/\[\[bin\]\][\s\S]*?name\s*=\s*"([^"]+)"/m);
+            if (binMatch?.[1]) return String(binMatch[1]).trim();
+            // Fallback to [package] name.
+            const pkgMatch = content.match(/\[package\][\s\S]*?name\s*=\s*"([^"]+)"/m);
+            if (pkgMatch?.[1]) return String(pkgMatch[1]).trim();
+        } catch {
+            // ignore
+        }
+        return 'main';
+    }
+
+    buildRustWrappedCommand(command) {
+        const wrapperPath = path.join(__dirname, 'rust', 'autowrx_rust_gdb_wrapper.js');
+        if (!fs.existsSync(wrapperPath)) {
+            this.send({
+                type: 'run.error',
+                message: 'rust gdb wrapper script is missing; running original command',
+                at: new Date().toISOString(),
+            });
+            return command;
+        }
+
+        const varsPipePath = path.join(
+            os.tmpdir(),
+            `autowrx-vars-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pipe`,
+        );
+        const controlPipePath = path.join(
+            os.tmpdir(),
+            `autowrx-control-${Date.now()}-${crypto.randomBytes(6).toString('hex')}.pipe`,
+        );
+
+        try {
+            execFileSync('mkfifo', [varsPipePath]);
+            execFileSync('mkfifo', [controlPipePath]);
+        } catch (error) {
+            this.send({
+                type: 'run.error',
+                message: `failed to initialize rust pipes: ${error?.message || error}`,
+                at: new Date().toISOString(),
+            });
+            return command;
+        }
+        this.startVarsChannel(varsPipePath, controlPipePath);
+
+        const projectRoot = this.workspacePath;
+        const binName = this.getRustBinNameFromCargoToml(projectRoot);
+        const programPath = `./target/debug/${binName}`;
+
+        const nodeBin = process.execPath || 'node';
+        const wrapperCommand = [
+            `"${nodeBin}"`,
+            `"${wrapperPath}"`,
+            '--program',
+            `"${programPath}"`,
+            '--vars-pipe',
+            `"${varsPipePath}"`,
+            '--control-pipe',
+            `"${controlPipePath}"`,
+        ].join(' ');
+
+        // Always build in debug profile; cargo defaults to dev profile.
+        const compilePart = 'cargo build --quiet';
         return `${compilePart} && ${wrapperCommand}`;
     }
 

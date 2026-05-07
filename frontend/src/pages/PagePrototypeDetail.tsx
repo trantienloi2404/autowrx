@@ -7,6 +7,7 @@
 // SPDX-License-Identifier: MIT
 
 import { FC, useCallback, useEffect, useMemo, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { configManagementService } from '@/services/configManagement.service'
 import useModelStore from '@/stores/modelStore'
 import { Prototype } from '@/types/model.type'
@@ -20,6 +21,7 @@ import {
   TbLayoutSidebar,
 } from 'react-icons/tb'
 import { GiSaveArrow } from 'react-icons/gi'
+import { TbFileCode } from 'react-icons/tb'
 import { saveRecentPrototype } from '@/services/prototype.service'
 import useSelfProfileQuery from '@/hooks/useSelfProfile'
 import useCurrentModel from '@/hooks/useCurrentModel'
@@ -29,7 +31,7 @@ import PrototypeTabCode from '@/components/organisms/PrototypeTabCode'
 import PrototypeTabVSCode from '@/components/organisms/PrototypeTabVSCode'
 import PrototypeTabDashboard from '@/components/organisms/PrototypeTabDashboard'
 import PrototypeTabFeedback from '@/components/organisms/PrototypeTabFeedback'
-import DaRuntimeControl from '@/components/molecules/dashboard/DaRuntimeControl'
+import DaWorkspaceRuntimeControl from '@/components/molecules/dashboard/DaWorkspaceRuntimeControl'
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -37,6 +39,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/atoms/dropdown-menu'
 import { Button } from '@/components/atoms/button'
+import { Input } from '@/components/atoms/input'
 import AddonSelect from '@/components/molecules/AddonSelect'
 import { Plugin } from '@/services/plugin.service'
 import { updateModelService } from '@/services/model.service'
@@ -47,6 +50,7 @@ import CustomTabEditor, {
   TabConfig,
   StagingConfig,
   RightNavPluginButton,
+  TabsBorderRadius,
 } from '@/components/organisms/CustomTabEditor'
 import PrototypeTabInfo from '../components/organisms/PrototypeTabInfo'
 import TemplateForm from '@/components/organisms/TemplateForm'
@@ -62,6 +66,7 @@ import StagingTabButton from '@/components/organisms/StagingTabButton'
 import { useSiteConfig } from '@/utils/siteConfig'
 import usePermissionHook from '@/hooks/usePermissionHook'
 import { PERMISSIONS } from '@/data/permission'
+import { createProjectTemplate } from '@/services/projectTemplate.service'
 
 interface ViewPrototypeProps {
   display?: 'tree' | 'list'
@@ -89,10 +94,14 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
   const [openManageAddonsDialog, setOpenManageAddonsDialog] = useState(false)
   const [openTemplateForm, setOpenTemplateForm] = useState(false)
   const [moreMenuOpen, setMoreMenuOpen] = useState(false)
-  const [hasWritePermission] = usePermissionHook([
-    PERMISSIONS.WRITE_MODEL,
-    model?.id,
-  ])
+  const [hasWritePermission, isAdmin] = usePermissionHook(
+    [PERMISSIONS.WRITE_MODEL, model?.id],
+    [PERMISSIONS.MANAGE_USERS],
+  )
+  const queryClient = useQueryClient()
+  const [openSaveProjectTemplate, setOpenSaveProjectTemplate] = useState(false)
+  const [projectTemplateName, setProjectTemplateName] = useState('')
+  const [savingProjectTemplate, setSavingProjectTemplate] = useState(false)
   const allowNonAdminAddonConfig = useSiteConfig(
     'ALLOW_NON_ADMIN_ADDON_CONFIG',
     true,
@@ -161,6 +170,9 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
   // Extract global tab style variant
   const tabsVariant: string | undefined =
     model?.custom_template?.prototype_tabs_variant || undefined
+
+  // Extract global tab border radius
+  const tabsBorderRadius: TabsBorderRadius | undefined = model?.custom_template?.prototype_tabs_border_radius || undefined
 
   // Extract staging tab config from prototype_right_nav_buttons
   const _rightNavRaw: RightNavPluginButton[] =
@@ -266,6 +278,29 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
   const canConfigurePrototypeAddons =
     (isModelOwner || hasWritePermission) && !!allowNonAdminAddonConfig
 
+  const handleSaveProjectTemplate = async () => {
+    if (!projectTemplateName.trim() || !prototype) return
+    setSavingProjectTemplate(true)
+    try {
+      const data = JSON.stringify({
+        language: prototype.language || 'python',
+        code: prototype.code || '',
+        widget_config: prototype.widget_config,
+        customer_journey: prototype.customer_journey,
+      })
+      await createProjectTemplate({ name: projectTemplateName.trim(), data })
+      await queryClient.invalidateQueries({ queryKey: ['project-templates'] })
+      await queryClient.invalidateQueries({ queryKey: ['project-templates-list'] })
+      toast.success('Project template saved')
+      setOpenSaveProjectTemplate(false)
+      setProjectTemplateName('')
+    } catch (e: any) {
+      toast.error(e?.response?.data?.message || e.message || 'Failed to save template')
+    } finally {
+      setSavingProjectTemplate(false)
+    }
+  }
+
   // Callback for plugins to navigate to a specific prototype tab
   const handleSetActiveTab = useCallback(
     (targetTab: string, targetPluginSlug?: string) => {
@@ -334,6 +369,7 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
     updatedSidebarPlugin?: string | null,
     updatedTabsVariant?: string | null,
     updatedRightNavButtons?: RightNavPluginButton[] | null,
+    updatedTabsBorderRadius?: TabsBorderRadius | null,
   ) => {
     if (!model_id || !model) {
       toast.error('Model not found')
@@ -354,6 +390,11 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
       // Update tabs variant: null means remove (revert to default), string means set, undefined means no change
       if (updatedTabsVariant !== undefined) {
         updates.prototype_tabs_variant = updatedTabsVariant ?? undefined
+      }
+
+      // Update border radius: null means remove (revert to default), string means set, undefined means no change
+      if (updatedTabsBorderRadius !== undefined) {
+        updates.prototype_tabs_border_radius = updatedTabsBorderRadius ?? undefined
       }
 
       // Update right nav buttons: null means remove, array means set, undefined means no change
@@ -402,6 +443,7 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
             <PrototypeTabs
               tabs={model?.custom_template?.prototype_tabs}
               tabsVariant={tabsVariant}
+              tabsBorderRadius={tabsBorderRadius}
             />
           </div>
           {canConfigurePrototypeAddons && (
@@ -442,7 +484,7 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
                   }}
                 >
                   <TbSettings className="w-5 h-5" />
-                  Manage Prototype Tabs
+                  Customize Layout...
                 </DropdownMenuItem>
                 <DropdownMenuItem
                   onClick={() => {
@@ -482,6 +524,17 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
                   <GiSaveArrow className="w-5 h-5" />
                   Save Solution as Template
                 </DropdownMenuItem>
+                {isAdmin && (
+                  <DropdownMenuItem
+                    onClick={() => {
+                      setMoreMenuOpen(false)
+                      setOpenSaveProjectTemplate(true)
+                    }}
+                  >
+                    <TbFileCode className="w-5 h-5" />
+                    Save Project as Template
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           )}
@@ -548,7 +601,7 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
                 />
               )}
           </div>
-          {showRt && <DaRuntimeControl />}
+          {showRt && <DaWorkspaceRuntimeControl />}
         </div>
       </div>
 
@@ -572,8 +625,9 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
         stagingConfig={stagingConfig}
         rightNavButtons={rightNavButtons}
         tabsVariant={tabsVariant}
-        title="Manage Prototype Tabs"
-        description="Reorder tabs, edit labels, hide/show tabs, and remove custom tabs"
+        tabsBorderRadius={tabsBorderRadius}
+        title="Customize Prototype Layout"
+        description="Configure tabs, appearance, sidebar, and action buttons"
       />
 
       {/* Template Form Dialog */}
@@ -591,6 +645,48 @@ const PagePrototypeDetail: FC<ViewPrototypeProps> = ({}) => {
           }}
           initialData={templateInitialData}
         />
+      </DaDialog>
+
+      {/* Save Project as Template Dialog */}
+      <DaDialog
+        open={openSaveProjectTemplate}
+        onOpenChange={(v) => {
+          setOpenSaveProjectTemplate(v)
+          if (!v) setProjectTemplateName('')
+        }}
+        className="w-[440px]"
+      >
+        <div className="p-6 space-y-4">
+          <h2 className="text-lg font-semibold">Create Template</h2>
+          <div className="space-y-2">
+            <label className="text-sm font-medium">Name *</label>
+            <Input
+              placeholder="Template name"
+              value={projectTemplateName}
+              onChange={(e) => setProjectTemplateName(e.target.value)}
+              autoFocus
+            />
+          </div>
+          <div className="flex justify-end gap-2 pt-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setOpenSaveProjectTemplate(false)
+                setProjectTemplateName('')
+              }}
+            >
+              Cancel
+            </Button>
+            <Button
+              size="sm"
+              disabled={!projectTemplateName.trim() || savingProjectTemplate}
+              onClick={handleSaveProjectTemplate}
+            >
+              {savingProjectTemplate ? 'Saving…' : 'Save'}
+            </Button>
+          </div>
+        </div>
       </DaDialog>
     </div>
   ) : (

@@ -2,129 +2,50 @@ terraform {
   required_providers {
     coder = {
       source  = "coder/coder"
-      version = "~> 0.12"
+      version = "= 2.15.0"
     }
     docker = {
       source  = "kreuzwerker/docker"
-      version = "~> 3.0"
+      version = "= 4.0.0"
     }
   }
 }
 
+variable "docker_socket" {
+  default     = ""
+  description = "(Optional) Docker socket URI (e.g. unix:///var/run/docker.sock). Empty uses Terraform default."
+  type        = string
+}
+
 provider "docker" {
-  # We connect to the same Docker socket that Coder is running on
-  host = "unix:///var/run/docker.sock"
+  host = var.docker_socket != "" ? var.docker_socket : null
 }
 
 provider "coder" {}
 
+# Workspace scheduling (default autostop/activity bump) is configured at template metadata level
+# via `coder templates edit` (see instance-setup/coder/start.sh), not inside this Terraform file.
+data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
-# 1. Ask for Git Repo (disabled; using prototypes folder mount)
-# data "coder_parameter" "git_repo" {
-#   name         = "git_repo"
-#   display_name = "Git Repository URL"
-#   description  = "The URL of the git repo to clone (provided by app)"
-#   default      = "https://github.com/coder/coder"
-#   mutable      = true
-# }
-
-# # Optional GitHub token for external repositories (disabled)
-# data "coder_parameter" "github_token" {
-#   name         = "github_token"
-#   display_name = "GitHub Personal Access Token"
-#   description  = "Optional GitHub PAT for accessing private repositories"
-#   type         = "string"
-#   default      = ""
-#   mutable      = true
-# }
-
-# Prototypes host path - bind-mount from host (provided by backend)
 data "coder_parameter" "prototypes_host_path" {
   name         = "prototypes_host_path"
   display_name = "Prototypes Host Path"
-  description  = "Host path to prototypes folder (bind-mount into workspace)"
-  default      = "/var/lib/autowrx/prototypes"
+  description  = "Host path mounted to /home/coder/prototypes (must match AutoWRX PROTOTYPES_PATH layout)."
+  default      = "/opt/autowrx/prototypes"
   mutable      = true
 }
 
-# 2. Create a Volume for data persistence (survives container restart)
-resource "docker_volume" "home_volume" {
-  name = "coder-${data.coder_workspace.me.id}-home"
-}
-
-# 3. Create the Workspace Container
-resource "docker_container" "workspace" {
-  count = data.coder_workspace.me.start_count
-  image = docker_image.autowrx_workspace.image_id
-  # Name must be unique per workspace
-  name  = "coder-${data.coder_workspace_owner.me.id}-${data.coder_workspace.me.name}"
-  
-  # Hostname inside the container
-  hostname = data.coder_workspace.me.name
-  
-  # Entrypoint: Use agent init script with URL replacements (amd64 Linux - no arch replacement)
-  entrypoint = ["sh", "-c", <<EOT
-${replace(coder_agent.main.init_script, "localhost:7080", "coder:7080")}
-  EOT
-  ]
-
-  env = [
-    "CODER_AGENT_TOKEN=${coder_agent.main.token}",
-    # Set the Coder server URL - use container name since we're on the same network
-    "CODER_AGENT_URL=http://coder:7080/"
-  ]
-  
-  # Connect to the same network as Coder
-  networks_advanced {
-    name = "coder_network"
-  }
-  
-  # Mount the persistent volume
-  volumes {
-    container_path = "/home/coder"
-    volume_name    = docker_volume.home_volume.name
-    read_only      = false
-  }
-
-  # Bind-mount prototypes folder from host (path from backend)
-  volumes {
-    host_path      = data.coder_parameter.prototypes_host_path.value
-    container_path = "/home/coder/prototypes"
-    read_only      = false
-  }
-
-  host {
-    host = "host.docker.internal"
-    ip   = "host-gateway"
-  }
-}
-
-# 3b. Build a pinned "golden" workspace image (fast startup)
-resource "docker_image" "autowrx_workspace" {
-  name         = "autowrx-workspace:1"
-  keep_locally = true
-
-  build {
-    context    = "./workspace-image"
-    dockerfile = "Dockerfile"
-  }
-}
-
-# 4. The Agent (Connects container to Coder Dashboard)
 resource "coder_agent" "main" {
-  arch = "amd64"  # x86_64 Linux (change to "arm64" for Apple Silicon)
+  arch = data.coder_provisioner.me.arch
   os   = "linux"
-  # startup_script only does setup - code-server is managed by coder_script below
-  startup_script = <<EOT
-    #!/bin/bash
-    # Do NOT use set -e: any failed command would kill the script
 
-    # Seed home directory once for fast new-workspace readiness
+  startup_script = <<-EOT
+    set -e
+
     if [ ! -f "/home/coder/.autowrx_seeded" ]; then
       if [ -d "/opt/autowrx-home-seed" ]; then
-        echo "Seeding /home/coder from /opt/autowrx-home-seed ..."
         if command -v rsync >/dev/null 2>&1; then
           rsync -a "/opt/autowrx-home-seed/" "/home/coder/" || true
         else
@@ -134,84 +55,143 @@ resource "coder_agent" "main" {
       touch "/home/coder/.autowrx_seeded" 2>/dev/null || true
     fi
 
-    # Configure Git
-    git config --global init.defaultBranch main
-    git config --global credential.helper store
-
-    # --- OPTIONAL GIT CLONE (DISABLED) ---
-    # Re-enable when git clone flow is needed. Also re-enable coder_parameter git_repo and github_token above.
-    #
-    # if [ -n "$${data.coder_parameter.github_token.value}" ]; then
-    #   echo "Configuring GitHub credentials..."
-    #   echo "https://oauth2:$${data.coder_parameter.github_token.value}@github.com" > ~/.git-credentials
-    #   chmod 600 ~/.git-credentials
-    # fi
-    #
-    # mkdir -p ~/project
-    # cd ~/project
-    # GIT_REPO_URL="$${data.coder_parameter.git_repo.value}"
-    # if [ ! -d ".git" ]; then
-    #   echo "Cloning repository: $GIT_REPO_URL"
-    #   git clone "$GIT_REPO_URL" . || {
-    #     git clone "$GIT_REPO_URL" . || echo "Warning: Could not clone repository"
-    #   }
-    # else
-    #   echo "Repository already exists, pulling latest changes..."
-    #   git remote set-url origin "$GIT_REPO_URL" 2>/dev/null || true
-    #   git pull || echo "Warning: Could not pull latest changes"
-    # fi
-    #
-    # if [ -f "requirements.txt" ]; then
-    #   echo "Installing Python dependencies..."
-    #   python3 -m pip install --user -r requirements.txt || echo "Warning: Could not install Python dependencies"
-    # fi
-    # --- END OPTIONAL GIT CLONE ---
-
-    # Ensure prototypes mount dir exists (fallback if backend didn't create it)
     mkdir -p /home/coder/prototypes
-
-    echo "Setup complete."
   EOT
 }
 
-# 4b. Run code-server as a managed coder_script (survives agent lifecycle properly)
-# Using exec so Coder manages the process and captures all logs including
-# "Session server listening on ..." which the frontend polls for.
+# Use image-bundled code-server with an explicit bind address. The registry module only passes
+# --port; code-server then listens on 127.0.0.1, while Coder's app proxy dials the workspace
+# tailnet address → 502 "connection refused" (see https://github.com/coder/coder/issues/12790 ).
 resource "coder_script" "code_server" {
   agent_id     = coder_agent.main.id
   display_name = "code-server"
   icon         = "/icon/code.svg"
-  script = <<EOT
+  run_on_start = true
+  script       = <<-EOT
     #!/bin/bash
+    set -eu
+    mkdir -p /home/coder/.config/code-server
+    printf '%s\n' 'bind-addr: 0.0.0.0:13337' > /home/coder/.config/code-server/config.yaml
 
-    # Find code-server binary
     CODE_SERVER_CMD=""
-    if command -v code-server &>/dev/null; then
-      CODE_SERVER_CMD="code-server"
-    elif [ -f "/usr/bin/code-server" ]; then
-      CODE_SERVER_CMD="/usr/bin/code-server"
-    elif [ -f "/usr/local/bin/code-server" ]; then
-      CODE_SERVER_CMD="/usr/local/bin/code-server"
+    if command -v code-server >/dev/null 2>&1; then
+      CODE_SERVER_CMD="$(command -v code-server)"
+    elif [ -x /usr/bin/code-server ]; then
+      CODE_SERVER_CMD=/usr/bin/code-server
+    elif [ -x /usr/local/bin/code-server ]; then
+      CODE_SERVER_CMD=/usr/local/bin/code-server
     else
-      echo "ERROR: code-server not found in image."
+      echo "ERROR: code-server not found in workspace image."
       exit 1
     fi
 
-    echo "Starting code-server on port 13337..."
-    # exec replaces shell with code-server so Coder owns the process lifecycle
-    exec $CODE_SERVER_CMD --auth none --port 13337 --bind-addr 0.0.0.0:13337
+    # Background like the official module so the script can exit; bind all interfaces for Coder app proxy.
+    nohup "$CODE_SERVER_CMD" --auth none --bind-addr 0.0.0.0:13337 --port 13337 >> /tmp/code-server-autowrx.log 2>&1 &
+    disown || true
   EOT
-  run_on_start = true
 }
 
-# 5. The App (VS Code Web UI)
-resource "coder_app" "code-server" {
+resource "coder_app" "code_server" {
   agent_id     = coder_agent.main.id
   slug         = "code-server"
   display_name = "VS Code"
-  # folder is set per-prototype by frontend via ?folder=; default to prototypes root
-  url          = "http://localhost:13337/?folder=/home/coder/prototypes"
+  url          = "http://localhost:13337/"
   icon         = "/icon/code.svg"
-  subdomain    = false  # Set to false for local development (no wildcard DNS needed)
-  share        = "owner"  # Only owner can access
+  subdomain    = false
+  share        = "owner"
+  healthcheck {
+    url       = "http://localhost:13337/healthz"
+    interval  = 5
+    threshold = 6
+  }
+}
+
+resource "docker_volume" "home_volume" {
+  name = "coder-${data.coder_workspace.me.id}-home"
+  lifecycle {
+    ignore_changes = all
+  }
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+  labels {
+    label = "coder.owner_id"
+    value = data.coder_workspace_owner.me.id
+  }
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+  labels {
+    label = "coder.workspace_name_at_creation"
+    value = data.coder_workspace.me.name
+  }
+}
+
+resource "docker_container" "workspace" {
+  count    = data.coder_workspace.me.start_count
+  image    = "autowrx-workspace:debian"
+  name     = "coder-${data.coder_workspace_owner.me.name}-${lower(data.coder_workspace.me.name)}"
+  hostname = data.coder_workspace.me.name
+
+  # Agent must reach Coder API (compose service `coder`).
+  entrypoint = ["sh", "-c", replace(
+    replace(
+      replace(
+        replace(coder_agent.main.init_script, "localhost:7080", "coder:7080"),
+        "127.0.0.1",
+        "host.docker.internal",
+      ),
+      "http://localhost:",
+      "http://host.docker.internal:",
+    ),
+    "https://localhost:",
+    "https://host.docker.internal:",
+  )]
+
+  env = [
+    "CODER_AGENT_TOKEN=${coder_agent.main.token}",
+    "CODER_AGENT_URL=http://coder:7080/",
+    "CODER_WORKSPACE_ID=${data.coder_workspace.me.id}",
+    "AUTOWRX_RUNNER_WS_URL=ws://host.docker.internal:3200/v2/system/coder/runner/ws",
+  ]
+
+  host {
+    host = "host.docker.internal"
+    ip   = "host-gateway"
+  }
+
+  networks_advanced {
+    name = "coder_network"
+  }
+
+  volumes {
+    container_path = "/home/coder"
+    volume_name      = docker_volume.home_volume.name
+    read_only        = false
+  }
+
+  volumes {
+    host_path      = data.coder_parameter.prototypes_host_path.value
+    container_path = "/home/coder/prototypes"
+    read_only      = false
+  }
+
+  labels {
+    label = "coder.owner"
+    value = data.coder_workspace_owner.me.name
+  }
+  labels {
+    label = "coder.owner_id"
+    value = data.coder_workspace_owner.me.id
+  }
+  labels {
+    label = "coder.workspace_id"
+    value = data.coder_workspace.me.id
+  }
+  labels {
+    label = "coder.workspace_name"
+    value = data.coder_workspace.me.name
+  }
 }

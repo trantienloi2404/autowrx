@@ -41,7 +41,10 @@
   "markdown.validate.enabled": false,
 
   "git.autofetch": false,
+  "remote.autoForwardPorts": false,
+  "remote.restoreForwardedPorts": false,
   "search.followSymlinks": false,
+  "files.autoSave": "onFocusChange",
   "files.watcherExclude": {
     "**/.git/objects/**": true,
     "**/.git/subtree-cache/**": true,
@@ -56,7 +59,6 @@
     "**/*.code-search": true
   },
   "files.exclude": {
-    "**/.autowrx_out": true,
-    "**/.autowrx_run": true
+    "**/.autowrx_cargo_run.lock": true
   }
 }

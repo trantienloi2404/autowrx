@@ -10,53 +10,59 @@ const fs = require('fs');
 const path = require('path');
 const httpStatus = require('http-status');
 const coderService = require('./coder.service');
-const { Prototype, Model, User } = require('../models');
+const workspaceBindingService = require('./workspaceBinding.service');
+const { Prototype, User } = require('../models');
 const logger = require('../config/logger');
 const ApiError = require('../utils/ApiError');
 const coderConfig = require('../utils/coderConfig');
-
-// Host/container UID mismatch is common in local deployments. We keep
-// permissive modes so the workspace user can write without manual chmod.
-const PROTOTYPES_DIR_MODE = 0o777;
-const PROTOTYPES_FILE_MODE = 0o666;
-const PROTOTYPES_LINUX_UID = 1000;
-const PROTOTYPES_LINUX_GID = 1000;
+const { getPrototypeFolderRelativePath } = require('../utils/prototypePath');
+const workspaceRunWsHub = require('./workspaceRunWsHub.service');
+const {
+  resolveWorkspaceKindFromPrototype,
+  getTemplateNameForWorkspaceKind,
+} = require('../utils/workspaceKind');
+/* eslint-disable security/detect-non-literal-fs-filename */
 
 const normalizeIdForName = (value) =>
   String(value || '')
     .toLowerCase()
     .replace(/[^a-z0-9]/g, '');
+const inFlightPrepareByUserAndKind = new Map();
 
-const chmodSafe = (targetPath, mode) => {
+const ensureHostFolderPermissions = (folderPath) => {
   try {
-    fs.chmodSync(targetPath, mode);
+    fs.chmodSync(folderPath, 0o777);
   } catch (err) {
-    logger.warn(`chmod failed for ${targetPath}: ${err.message}`);
+    logger.warn(`chmod 777 failed for ${folderPath}: ${err.message}`);
   }
 };
 
-const chownSafe = (targetPath, uid, gid) => {
-  try {
-    fs.chownSync(targetPath, uid, gid);
-  } catch (err) {
-    logger.warn(`chown failed for ${targetPath} -> ${uid}:${gid}: ${err.message}`);
-  }
-};
-
-const setOwnershipAndPermissionsRecursive = (rootPath, uid, gid) => {
-  try {
-    const stat = fs.lstatSync(rootPath);
-    if (stat.isDirectory()) {
-      chownSafe(rootPath, uid, gid);
-      chmodSafe(rootPath, PROTOTYPES_DIR_MODE);
-      const entries = fs.readdirSync(rootPath);
-      entries.forEach((entry) => setOwnershipAndPermissionsRecursive(path.join(rootPath, entry), uid, gid));
-      return;
+/**
+ * Recursively align bind-mounted prototype trees with the Coder workspace user (uid/gid)
+ * and force permissive modes so code-server can read/write seeded files (backend may run as root).
+ * @param {string} rootPath - Host path under PROTOTYPES_PATH (single prototype folder)
+ */
+const ensureHostPrototypeTreePermissions = (rootPath) => {
+  const walk = (entryPath) => {
+    try {
+      try {
+        fs.chmodSync(entryPath, 0o777);
+      } catch (err) {
+        logger.warn(`chmod 777 failed for ${entryPath}: ${err.message}`);
+      }
+      const st = fs.statSync(entryPath);
+      if (!st.isDirectory()) return;
+      fs.readdirSync(entryPath).forEach((name) => {
+        walk(path.join(entryPath, name));
+      });
+    } catch (err) {
+      logger.warn(`prototype tree permission walk failed for ${entryPath}: ${err.message}`);
     }
-    chownSafe(rootPath, uid, gid);
-    chmodSafe(rootPath, PROTOTYPES_FILE_MODE);
+  };
+  try {
+    if (fs.existsSync(rootPath)) walk(rootPath);
   } catch (err) {
-    logger.warn(`Failed to set ownership/permissions recursively for ${rootPath}: ${err.message}`);
+    logger.warn(`ensureHostPrototypeTreePermissions failed for ${rootPath}: ${err.message}`);
   }
 };
 
@@ -69,26 +75,34 @@ const looksLikeFileTree = (value) => {
 };
 
 const flattenFileTree = (items, basePath = '') => {
-  const files = [];
-  for (const item of items) {
-    if (!item || typeof item !== 'object') continue;
+  return items.reduce((acc, item) => {
+    if (!item || typeof item !== 'object') return acc;
+
     const name = typeof item.name === 'string' ? item.name : '';
-    if (!name) continue;
+    if (!name) return acc;
 
     const currentPath = basePath ? `${basePath}/${name}` : name;
-
     if (item.type === 'folder') {
       const children = Array.isArray(item.items) ? item.items : [];
-      files.push(...flattenFileTree(children, currentPath));
-      continue;
+      return acc.concat(flattenFileTree(children, currentPath));
     }
 
     if (item.type === 'file') {
       const content = typeof item.content === 'string' ? item.content : '';
-      files.push({ path: currentPath, content });
+      return acc.concat([{ path: currentPath, content }]);
     }
-  }
-  return files;
+
+    return acc;
+  }, []);
+};
+
+const getMainFileNameByLanguage = (language) => {
+  const lang = String(language || '')
+    .trim()
+    .toLowerCase();
+  if (lang === 'python' || lang === 'py') return 'main.py';
+  if (lang === 'rust' || lang === 'rs') return 'main.rs';
+  return 'main.txt';
 };
 
 const buildInitialRepoContentFromPrototype = (prototype) => {
@@ -122,7 +136,7 @@ const buildInitialRepoContentFromPrototype = (prototype) => {
 
   // Single-file templates: store raw code. Seed a minimal project.
   if (code.trim().length > 0) {
-    const mainFileByLanguage = prototype?.language === 'python' ? 'main.py' : 'main.txt';
+    const mainFileByLanguage = getMainFileNameByLanguage(prototype?.language);
     return {
       readme: `# ${prototype?.name || 'Prototype'}\n\nGenerated from single-file template.\n`,
       files: [
@@ -138,31 +152,11 @@ const buildInitialRepoContentFromPrototype = (prototype) => {
 };
 
 /**
- * Sanitize prototype name for use as folder name
- * @param {string} name - Prototype name
- * @returns {string} Sanitized folder name
- */
-const sanitizePrototypeFolderName = (name) => {
-  if (!name || typeof name !== 'string') return 'unnamed-prototype';
-  const sanitized = name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9\-_]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 64);
-  return sanitized || 'unnamed-prototype';
-};
-
-/**
  * Seed initial code files into a prototype folder (only if folder is empty)
  * @param {string} folderPath - Host folder path
  * @param {Object} prototype - Prototype document
- * @param {number} uid - Linux UID used by workspace container user
- * @param {number} gid - Linux GID used by workspace container user
  */
-const seedPrototypeFiles = (folderPath, prototype, uid, gid) => {
+const seedPrototypeFiles = (folderPath, prototype) => {
   try {
     const existingFiles = fs.readdirSync(folderPath);
     if (existingFiles.length > 0) {
@@ -175,18 +169,16 @@ const seedPrototypeFiles = (folderPath, prototype, uid, gid) => {
     if (content.readme) {
       const readmePath = path.join(folderPath, 'README.md');
       fs.writeFileSync(readmePath, content.readme);
-      chownSafe(readmePath, uid, gid);
-      chmodSafe(readmePath, PROTOTYPES_FILE_MODE);
+      ensureHostFolderPermissions(readmePath);
     }
 
     if (content.files && content.files.length > 0) {
       content.files.forEach((file) => {
         const filePath = path.join(folderPath, file.path);
-        fs.mkdirSync(path.dirname(filePath), { recursive: true });
+        fs.mkdirSync(path.dirname(filePath), { recursive: true, mode: 0o777 });
+        ensureHostFolderPermissions(path.dirname(filePath));
         fs.writeFileSync(filePath, file.content);
-        setOwnershipAndPermissionsRecursive(path.dirname(filePath), uid, gid);
-        chownSafe(filePath, uid, gid);
-        chmodSafe(filePath, PROTOTYPES_FILE_MODE);
+        ensureHostFolderPermissions(filePath);
       });
       logger.info(`Seeded ${content.files.length} file(s) into ${folderPath}`);
     }
@@ -201,255 +193,205 @@ const seedPrototypeFiles = (folderPath, prototype, uid, gid) => {
  * @param {string} prototypeId - Prototype ID
  * @returns {Promise<Object>} Workspace info with URL and session token
  */
-const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
+const prepareWorkspaceForPrototypeUnsafe = async (userId, prototypeId) => {
   try {
-    // 1. Get prototype and model data
-    const prototype = await Prototype.findById(prototypeId).populate('model_id');
-    if (!prototype) {
-      throw new ApiError(httpStatus.NOT_FOUND, 'Prototype not found');
-    }
+    // 1. Fetch data concurrently to save time
+    const [prototype, user, coderCfg] = await Promise.all([
+      Prototype.findById(prototypeId).populate('model_id'),
+      User.findById(userId),
+      coderConfig.getCoderConfig({ forceRefresh: true }),
+    ]);
 
-    const model = await Model.findById(prototype.model_id);
-    if (!model) {
-      throw new ApiError(httpStatus.NOT_FOUND, 'Model not found');
-    }
+    // Validation Guard Clauses
+    if (!prototype) throw new ApiError(httpStatus.NOT_FOUND, 'Prototype not found');
+    if (!prototype.model_id) throw new ApiError(httpStatus.NOT_FOUND, 'Model not found');
+    if (!user) throw new ApiError(httpStatus.NOT_FOUND, 'User not found');
+    if (!coderCfg.enabled) throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
 
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new ApiError(httpStatus.NOT_FOUND, 'User not found');
-    }
-
-    // Coder integration settings (stored in DB, not in .env)
-    const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
-    if (!coderCfg.enabled) {
-      throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
-    }
-    const prototypesPath = coderCfg.prototypesPath;
-
-    // 2. Ensure Coder user exists
-    const normalizedUserId = normalizeIdForName(userId);
-    const coderUsername = user.coder_username || `user-${normalizedUserId || Date.now().toString(36)}`;
+    // 2. Normalize Coder User
     if (!user.coder_username) {
-      user.coder_username = coderUsername;
+      const normalizedId = normalizeIdForName(userId);
+      user.coder_username = `user-${normalizedId || Date.now().toString(36)}`;
       await user.save();
     }
 
-    const coderUser = await coderService.ensureUserExists(userId, coderUsername, user.email);
-    // Mint (or reuse) a user-scoped token. Admin key is only used inside this helper.
-    // Use an unrestricted token first (needed before workspaceId exists).
-    const userScopedToken = await coderService.getOrCreateUserScopedToken(user);
+    const coderUser = await coderService.ensureUserExists(userId, user.coder_username, user.email);
 
-    // 3. Prepare prototype folder on host (per-user dir, prototype name as subfolder)
-    const userHostPath = path.join(prototypesPath, userId.toString());
-    const prototypeFolderName = sanitizePrototypeFolderName(prototype.name);
-    const prototypeFolderHost = path.join(userHostPath, prototypeFolderName);
+    // Get initial token (unrestricted)
+    const userScopedToken = await coderService.getOrCreateUserScopedToken(user, {
+      coderUserId: coderUser.id,
+    });
+
+    // 3. Setup Filesystem
+    const prototypeFolderRelativePath = getPrototypeFolderRelativePath(prototype);
+    const userHostPath = path.join(coderCfg.prototypesPath, userId.toString());
+    const prototypeFolderHost = path.join(userHostPath, prototypeFolderRelativePath);
 
     try {
-      fs.mkdirSync(prototypeFolderHost, { recursive: true });
-      setOwnershipAndPermissionsRecursive(userHostPath, PROTOTYPES_LINUX_UID, PROTOTYPES_LINUX_GID);
-      logger.info(`Ensured prototype folder exists: ${prototypeFolderHost}`);
-    } catch (mkdirErr) {
-      logger.warn(`Could not create prototype folder ${prototypeFolderHost}: ${mkdirErr.message}`);
+      fs.mkdirSync(userHostPath, { recursive: true, mode: 0o777 });
+      fs.mkdirSync(prototypeFolderHost, { recursive: true, mode: 0o777 });
+      ensureHostFolderPermissions(userHostPath);
+      ensureHostFolderPermissions(prototypeFolderHost);
+      seedPrototypeFiles(prototypeFolderHost, prototype);
+      ensureHostPrototypeTreePermissions(prototypeFolderHost);
+    } catch (fsErr) {
+      logger.warn(`Filesystem prep warning for ${prototypeFolderHost}: ${fsErr.message}`);
     }
 
-    // 4. Seed initial code files (only if folder is empty)
-    seedPrototypeFiles(prototypeFolderHost, prototype, PROTOTYPES_LINUX_UID, PROTOTYPES_LINUX_GID);
-    setOwnershipAndPermissionsRecursive(prototypeFolderHost, PROTOTYPES_LINUX_UID, PROTOTYPES_LINUX_GID);
+    // 4. Handle Workspace (Reuse or Create)
+    const workspaceKind = resolveWorkspaceKindFromPrototype(prototype);
+    const workspaceName = coderService.sanitizeWorkspaceName(userId, workspaceKind);
+    const templateName = getTemplateNameForWorkspaceKind(workspaceKind);
+    let workspace = null;
 
-    // 5. Get or create ONE workspace per user (reuse across prototypes)
-    const workspaceName = coderService.sanitizeWorkspaceName(userId);
-    const templateId = await coderService.getTemplateId('docker-template');
-
-    let workspace = user.coder_workspace_id
-      ? await coderService.getWorkspaceStatus(user.coder_workspace_id, userScopedToken).catch(() => null)
-      : null;
+    const workspaceBinding = await workspaceBindingService.getBindingByUser(userId, workspaceKind);
+    const mappedWorkspaceId = workspaceBinding?.workspace_id || null;
+    if (mappedWorkspaceId) {
+      workspace = await coderService.getWorkspaceStatus(mappedWorkspaceId, userScopedToken).catch(() => null);
+    }
 
     if (!workspace) {
+      const templateId = await coderService.getTemplateId(templateName);
       workspace = await coderService.getOrCreateWorkspace(
         coderUser.id,
         workspaceName,
         templateId,
         userHostPath,
-        null,
-        null,
+        userHostPath,
         userScopedToken,
       );
-
-      user.coder_workspace_id = workspace.id;
-      user.coder_workspace_name = workspaceName;
-      await user.save();
     }
 
-    // Now that we have a workspace, mint (or reuse) an allow-listed token restricted to this workspace.
-    const workspaceScopedToken = await coderService.getOrCreateUserScopedToken(user, { workspaceId: workspace.id });
+    await workspaceBindingService.upsertBinding({
+      userId,
+      coderUserId: coderUser.id,
+      workspaceId: workspace.id,
+      workspaceName,
+      prototypesHostPath: userHostPath,
+      templateName,
+      workspaceKind,
+    });
 
-    // 6. Start workspace if stopped
-    const currentStatus = workspace.latest_build?.status;
-    if (currentStatus !== 'running') {
-      const updatedWorkspace = await coderService.startWorkspace(workspace.id, workspaceScopedToken);
-      workspace = updatedWorkspace;
+    const workspaceId = workspace.id;
 
-      if (workspace.latest_build?.status === 'starting') {
-        await new Promise((resolve) => setTimeout(resolve, 2000));
-      }
-    }
-
-    // 7. Get workspace app URL
-    let appUrl = null;
+    // Reuse the same user token for the whole tab-open flow to avoid minting multiple times.
+    const workspaceScopedToken = userScopedToken;
+    const workspaceTtlSeconds = Number(coderCfg.workspaceTtlSeconds);
+    const workspaceTtlMs =
+      Number.isFinite(workspaceTtlSeconds) && workspaceTtlSeconds >= 0
+        ? Math.floor(workspaceTtlSeconds * 1000)
+        : 0;
     try {
-      appUrl = await coderService.getWorkspaceAppUrl(workspace.id, 'code-server', 5, 2000, workspaceScopedToken);
-    } catch (error) {
-      if (error instanceof ApiError && error.statusCode === httpStatus.NOT_FOUND) {
-        logger.warn(
-          `Workspace app URL not ready yet for workspace ${workspace.id}: ${error.message}. ` +
-            'Continuing without app URL so the frontend can poll until it is available.',
-        );
-        appUrl = null;
-      } else {
-        throw error;
-      }
+      await coderService.updateWorkspaceTtl(workspaceId, workspaceTtlMs, workspaceScopedToken);
+    } catch (ttlErr) {
+      logger.warn(`Workspace TTL update failed for ${workspaceId}: ${ttlErr.message}`);
     }
 
-    // 8. Generate session token for user
-    // Return the workspace-scoped token (allow-listed) for embedding/agent log access.
-    const sessionToken = workspaceScopedToken;
+    // 6. Ensure Workspace is running
+    let status = workspace.latest_build?.status;
+    if (status !== 'running') {
+      await coderService.startWorkspace(workspaceId, workspaceScopedToken);
+      workspace = await coderService.getWorkspaceStatus(workspaceId, workspaceScopedToken);
+      status = workspace?.latest_build?.status;
+    }
 
-    // Container path: user host path is mounted at /home/coder/prototypes
-    const folderPath = `/home/coder/prototypes/${prototypeFolderName}`;
+    // 6b. Coder can keep latest_build "running" after the container/agent is gone; stop+start once to recover
+    workspace = await coderService.restoreUnhealthyRunningWorkspace(workspaceId, workspaceScopedToken);
+    status = workspace.latest_build?.status;
 
-    logger.info(`Workspace prepared for prototype ${prototypeId}: ${workspace.id}, folder: ${folderPath}`);
+    logger.info(`Workspace ready | User: ${userId} | Proto: ${prototypeId} | Folder: ${prototypeFolderRelativePath}`);
 
     return {
       workspaceId: workspace.id,
       workspaceName: workspace.name,
-      status: workspace.latest_build?.status || 'unknown',
-      appUrl,
-      sessionToken,
-      repoUrl: null,
-      folderPath,
+      workspaceBuildId: workspace?.latest_build?.id || null,
+      status: status || 'unknown',
+      sessionToken: workspaceScopedToken,
+      folderPath: `/home/coder/prototypes/${prototypeFolderRelativePath}`,
     };
   } catch (error) {
-    logger.error(`Failed to prepare workspace for prototype: ${error.message}`);
-    if (error instanceof ApiError) {
-      throw error;
-    }
+    logger.error(`Workspace Prep Failed: ${error.message}`);
+    if (error instanceof ApiError) throw error;
     throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to prepare workspace: ${error.message}`);
   }
 };
 
-/**
- * Get workspace status for a prototype
- * @param {string} userId - User ID
- * @param {string} prototypeId - Prototype ID
- * @returns {Promise<Object>} Workspace status
- */
-const getWorkspaceStatus = async (userId, prototypeId) => {
-  try {
-    const user = await User.findById(userId);
-    if (!user) {
-      throw new ApiError(httpStatus.NOT_FOUND, 'User not found');
-    }
-
-    if (!user.coder_workspace_id) {
-      return {
-        exists: false,
-        status: 'not_created',
-      };
-    }
-
-    const workspaceScopedToken = await coderService.getOrCreateUserScopedToken(user, {
-      workspaceId: user.coder_workspace_id,
-    });
-    const workspace = await coderService.getWorkspaceStatus(user.coder_workspace_id, workspaceScopedToken);
-
-    return {
-      exists: true,
-      workspaceId: workspace.id,
-      status: workspace.latest_build?.status || 'unknown',
-      transition: workspace.latest_build?.transition || null,
-    };
-  } catch (error) {
-    if (error instanceof ApiError && error.statusCode === 404) {
-      return { exists: false, status: 'not_created' };
-    }
-    logger.error(`Failed to get workspace status: ${error.message}`);
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to get workspace status: ${error.message}`);
+const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
+  const prototypeForLock = await Prototype.findById(prototypeId).select('language');
+  if (!prototypeForLock) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Prototype not found');
   }
-};
+  const workspaceKind = resolveWorkspaceKindFromPrototype(prototypeForLock);
+  const prepareKey = `${String(userId)}:${String(workspaceKind)}`;
 
-/**
- * Get workspace timings for a prototype
- * @param {string} userId - User ID
- * @param {string} prototypeId - Prototype ID
- * @returns {Promise<Object>} Workspace build timings
- */
-const getWorkspaceTimings = async (userId, prototypeId) => {
-  try {
-    const user = await User.findById(userId);
-    if (!user?.coder_workspace_id) {
-      throw new ApiError(httpStatus.NOT_FOUND, 'Workspace not found. Create and start the workspace first.');
-    }
-
-    const workspaceScopedToken = await coderService.getOrCreateUserScopedToken(user, {
-      workspaceId: user.coder_workspace_id,
-    });
-    const timings = await coderService.getWorkspaceTimings(user.coder_workspace_id, workspaceScopedToken);
-    return timings;
-  } catch (error) {
-    logger.error(`Failed to get workspace timings: ${error.message}`);
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to get workspace timings: ${error.message}`);
+  const inFlight = inFlightPrepareByUserAndKind.get(prepareKey);
+  if (inFlight) {
+    logger.info(`Joining in-flight workspace prepare for key=${prepareKey}`);
+    return inFlight;
   }
-};
 
-/**
- * Get workspace logs for a prototype (by resolving its workspace and agent)
- * @param {string} userId - User ID
- * @param {string} prototypeId - Prototype ID
- * @param {Object} options - Log query options (before, after, follow, no_compression, format)
- * @returns {Promise<any>} Workspace agent logs
- */
-const getWorkspaceLogs = async (userId, prototypeId, options = {}) => {
+  const task = prepareWorkspaceForPrototypeUnsafe(userId, prototypeId);
+  inFlightPrepareByUserAndKind.set(prepareKey, task);
   try {
-    const user = await User.findById(userId);
-    if (!user?.coder_workspace_id) {
-      throw new ApiError(httpStatus.NOT_FOUND, 'Workspace not found. Create and start the workspace first.');
+    return await task;
+  } finally {
+    if (inFlightPrepareByUserAndKind.get(prepareKey) === task) {
+      inFlightPrepareByUserAndKind.delete(prepareKey);
     }
-    const workspaceScopedToken = await coderService.getOrCreateUserScopedToken(user, {
-      workspaceId: user.coder_workspace_id,
-    });
-    const logs = await coderService.getWorkspaceLogsByWorkspaceId(user.coder_workspace_id, options, workspaceScopedToken);
-    return logs;
-  } catch (error) {
-    logger.error(`Failed to get workspace logs: ${error.message}`);
-    if (error instanceof ApiError) {
-      throw error;
-    }
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to get workspace logs: ${error.message}`);
   }
 };
 
 /** Server-side only: maps client runKind to shell command (never accept raw command from client). */
 const RUN_KIND_COMMANDS = {
-  // -u: unbuffered stdout so tee sees lines immediately; tee copies to terminal and .autowrx_out
-  'python-main': 'python3 -u main.py 2>&1 | tee .autowrx_out',
-  'c-main': 'gcc main.c -o main && ./main 2>&1 | tee .autowrx_out',
+  'python-main': 'python3 -u main.py',
+  'cpp-main': 'g++ -g -O0 -o main -Iinclude src/*.cpp && ./main',
+  'rust-main': 'cargo run',
+};
+
+const resolveRunCommand = (runKind) => {
+  switch (runKind) {
+    case 'python-main':
+      return RUN_KIND_COMMANDS['python-main'];
+    case 'c-main':
+      return RUN_KIND_COMMANDS['c-main'];
+    case 'cpp-main':
+      return RUN_KIND_COMMANDS['cpp-main'];
+    case 'rust-main':
+      return RUN_KIND_COMMANDS['rust-main'];
+    default:
+      return null;
+  }
 };
 
 /**
- * Write `.autowrx_run` on the host prototypes volume so the VS Code extension in the
- * Coder workspace (same mount) can pick it up via FileSystemWatcher.
+ * Derive run kind from prototype.language (authoritative metadata).
+ * @param {import('mongoose').Document} prototype
+ * @returns {'python-main'|'c-main'|'cpp-main'|'rust-main'}
+ */
+const resolveRunKindFromPrototype = (prototype) => {
+  const lang = String(prototype?.language ?? '')
+    .trim()
+    .toLowerCase();
+  if (lang === 'cpp' || lang === 'c++') return 'cpp-main';
+  if (lang === 'c') return 'c-main';
+  if (lang === 'rust' || lang === 'rs') return 'rust-main';
+  return 'python-main';
+};
+
+const buildRunCommandForPrototype = (prototype) => {
+  const runKind = resolveRunKindFromPrototype(prototype);
+  const command = resolveRunCommand(runKind);
+  return { runKind, command };
+};
+
+/**
+ * Send run command to workspace runner over WebSocket hub.
  * @param {string} userId
  * @param {import('mongoose').Document} prototype - Prototype document (already authorized)
  * @param {string} runKind - key in RUN_KIND_COMMANDS
  */
 const triggerRunForPrototype = async (userId, prototype, runKind) => {
-  const safeCommand = RUN_KIND_COMMANDS[runKind];
+  const safeCommand = resolveRunCommand(runKind);
   if (!safeCommand) {
     throw new ApiError(httpStatus.BAD_REQUEST, 'Invalid run kind');
   }
@@ -459,74 +401,35 @@ const triggerRunForPrototype = async (userId, prototype, runKind) => {
     throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
   }
 
-  const prototypesPath = coderCfg.prototypesPath;
-  if (!prototypesPath) {
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Prototypes path is not configured');
+  const workspaceKind = resolveWorkspaceKindFromPrototype(prototype);
+  const user = await User.findById(userId);
+  const workspaceId = await workspaceBindingService.getWorkspaceIdForUser(user, workspaceKind);
+  if (!workspaceId) {
+    throw new ApiError(httpStatus.NOT_FOUND, 'Workspace not found. Prepare workspace first.');
   }
 
-  const prototypeFolderName = sanitizePrototypeFolderName(prototype.name);
-  const userHostPath = path.join(prototypesPath, userId.toString());
-  const prototypeFolderHost = path.join(userHostPath, prototypeFolderName);
-  const triggerFilePath = path.join(prototypeFolderHost, '.autowrx_run');
+  const sent = workspaceRunWsHub.sendToRunners(workspaceId, {
+    type: 'run.start',
+    workspaceId: String(workspaceId),
+    prototypeId: String(prototype.id),
+    runKind,
+    command: safeCommand,
+    at: new Date().toISOString(),
+  });
 
-  try {
-    fs.mkdirSync(prototypeFolderHost, { recursive: true });
-    fs.writeFileSync(triggerFilePath, safeCommand, 'utf8');
-    chownSafe(triggerFilePath, PROTOTYPES_LINUX_UID, PROTOTYPES_LINUX_GID);
-    chmodSafe(triggerFilePath, PROTOTYPES_FILE_MODE);
-    logger.info(`Wrote Coder trigger file for prototype ${prototype.id}: ${triggerFilePath}`);
-  } catch (err) {
-    logger.error(`Failed to write trigger file ${triggerFilePath}: ${err.message}`);
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, `Failed to write run trigger: ${err.message}`);
-  }
-};
-
-const MAX_RUN_OUTPUT_BYTES = 512 * 1024;
-
-/**
- * Read `.autowrx_out` from the host prototypes folder (same bind-mount as the Coder workspace).
- * @returns {{ content: string, mtimeMs: number }}
- */
-const getRunOutputForPrototype = async (userId, prototype) => {
-  const coderCfg = await coderConfig.getCoderConfig({ forceRefresh: true });
-  if (!coderCfg.enabled) {
-    throw new ApiError(httpStatus.FORBIDDEN, 'VSCode integration is disabled');
+  if (!sent) {
+    throw new ApiError(
+      httpStatus.SERVICE_UNAVAILABLE,
+      'AutoWRX Runner extension is not connected for this workspace',
+    );
   }
 
-  const prototypesPath = coderCfg.prototypesPath;
-  if (!prototypesPath) {
-    throw new ApiError(httpStatus.INTERNAL_SERVER_ERROR, 'Prototypes path is not configured');
-  }
-
-  const prototypeFolderName = sanitizePrototypeFolderName(prototype.name);
-  const userHostPath = path.join(prototypesPath, userId.toString());
-  const prototypeFolderHost = path.join(userHostPath, prototypeFolderName);
-  const outPath = path.join(prototypeFolderHost, '.autowrx_out');
-
-  if (!fs.existsSync(outPath)) {
-    return { content: '', mtimeMs: 0 };
-  }
-
-  const stat = fs.statSync(outPath);
-  const buf = fs.readFileSync(outPath);
-  let body = buf;
-  let prefix = '';
-  if (buf.length > MAX_RUN_OUTPUT_BYTES) {
-    body = buf.subarray(buf.length - MAX_RUN_OUTPUT_BYTES);
-    prefix = '…(truncated, showing last 512 KiB)\n';
-  }
-
-  return {
-    content: prefix + body.toString('utf8'),
-    mtimeMs: stat.mtimeMs,
-  };
+  logger.info(`Sent run.start to runner(s) for workspace=${workspaceId}, prototype=${prototype.id}`);
 };
 
 module.exports = {
   prepareWorkspaceForPrototype,
-  getWorkspaceStatus,
-  getWorkspaceTimings,
-  getWorkspaceLogs,
   triggerRunForPrototype,
-  getRunOutputForPrototype,
+  resolveRunKindFromPrototype,
+  buildRunCommandForPrototype,
 };

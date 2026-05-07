@@ -28,8 +28,10 @@ module.exports.ssoService = require('./sso.service');
 module.exports.pluginService = require('./plugin.service');
 module.exports.modelTemplateService = require('./modelTemplate.service');
 module.exports.dashboardTemplateService = require('./dashboardTemplate.service');
+module.exports.projectTemplateService = require('./projectTemplate.service');
 module.exports.customApiSchemaService = require('./customApiSchema.service');
 module.exports.customApiSetService = require('./customApiSet.service');
 module.exports.coderService = require('./coder.service');
 module.exports.orchestratorService = require('./orchestrator.service');
+module.exports.workspaceBindingService = require('./workspaceBinding.service');
 // Inventory services removed

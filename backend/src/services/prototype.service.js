@@ -18,6 +18,7 @@ const coderConfig = require('../utils/coderConfig');
 const logger = require('../config/logger');
 const modelService = require('./model.service');
 const apiService = require('./api.service');
+const { sanitizePrototypeFolderName } = require('../utils/prototypePath');
 const _ = require('lodash');
 
 /**
@@ -28,19 +29,6 @@ const _ = require('lodash');
  */
 const stripTrailingNumber = (name) => {
   return name.replace(/_\d+$/, '');
-};
-
-const sanitizePrototypeFolderName = (name) => {
-  if (!name || typeof name !== 'string') return 'unnamed-prototype';
-  const sanitized = name
-    .trim()
-    .toLowerCase()
-    .replace(/\s+/g, '-')
-    .replace(/[^a-z0-9\-_]/g, '-')
-    .replace(/-+/g, '-')
-    .replace(/^-|-$/g, '')
-    .slice(0, 64);
-  return sanitized || 'unnamed-prototype';
 };
 
 const IGNORED_DIRS = new Set(['.git', '.svn', '.hg', 'node_modules', '__pycache__', '.venv', 'venv']);
@@ -55,7 +43,6 @@ const ALLOWED_TEXT_EXTENSIONS = new Set([
   '.yml',
   '.toml',
   '.ini',
-  '.env',
   '.sh',
   '.bash',
   '.zsh',
@@ -73,6 +60,129 @@ const ALLOWED_TEXT_EXTENSIONS = new Set([
 ]);
 const MAX_FILE_SIZE_BYTES = 1024 * 1024; // 1MB/file
 const MAX_TOTAL_BYTES = 5 * 1024 * 1024; // 5MB total scan budget
+
+const SECRET_LIKE_BASENAMES = new Set([
+  '.env',
+  '.env.local',
+  '.env.development',
+  '.env.test',
+  '.env.production',
+  'id_rsa',
+  'id_dsa',
+  'id_ecdsa',
+  'id_ed25519',
+  'credentials',
+  'credentials.json',
+  'credential.json',
+  'secrets',
+  'secrets.json',
+  'secret',
+  'secret.json',
+  'token',
+  'tokens.json',
+  'access_token',
+  'refresh_token',
+]);
+
+const SECRET_LIKE_EXTENSIONS = new Set(['.pem', '.key', '.p12', '.pfx']);
+
+const resolvePrototypeFoldersAcrossUsers = (modelId, prototypeName) => {
+  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/opt/autowrx/prototypes';
+  const resolvedRoot = path.resolve(prototypesRoot);
+  const sanitizedFolderName = sanitizePrototypeFolderName(prototypeName);
+  const resolvedModelId = String(modelId || '').trim();
+
+  if (!resolvedModelId || !fs.existsSync(resolvedRoot)) {
+    return [];
+  }
+
+  let userDirectories = [];
+  try {
+    userDirectories = fs.readdirSync(resolvedRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  } catch (error) {
+    logger.warn(`Failed to read prototypes root ${resolvedRoot}: ${error.message}`);
+    return [];
+  }
+
+  return userDirectories.map((entry) => path.join(resolvedRoot, entry.name, resolvedModelId, sanitizedFolderName));
+};
+
+const resolveModelFoldersAcrossUsers = (modelId) => {
+  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/opt/autowrx/prototypes';
+  const resolvedRoot = path.resolve(prototypesRoot);
+  const resolvedModelId = String(modelId || '').trim();
+
+  if (!resolvedModelId || !fs.existsSync(resolvedRoot)) {
+    return [];
+  }
+
+  let userDirectories = [];
+  try {
+    userDirectories = fs.readdirSync(resolvedRoot, { withFileTypes: true }).filter((entry) => entry.isDirectory());
+  } catch (error) {
+    logger.warn(`Failed to read prototypes root ${resolvedRoot}: ${error.message}`);
+    return [];
+  }
+
+  return userDirectories.map((entry) => path.join(resolvedRoot, entry.name, resolvedModelId));
+};
+
+const deleteFolderSafely = (folderPath) => {
+  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/opt/autowrx/prototypes';
+  const resolvedRoot = path.resolve(prototypesRoot);
+  const resolvedTarget = path.resolve(folderPath);
+  const isInsideRoot = resolvedTarget === resolvedRoot || resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`);
+  if (!isInsideRoot) {
+    logger.warn(`Skipped deleting path outside prototypes root: ${resolvedTarget}`);
+    return false;
+  }
+  if (!fs.existsSync(resolvedTarget)) {
+    return false;
+  }
+  fs.rmSync(resolvedTarget, { recursive: true, force: true });
+  return true;
+};
+
+const cleanupPrototypeWorkspaceFolders = (modelId, prototypeName) => {
+  const targets = resolvePrototypeFoldersAcrossUsers(modelId, prototypeName);
+  let deletedCount = 0;
+  targets.forEach((folderPath) => {
+    try {
+      if (deleteFolderSafely(folderPath)) {
+        deletedCount += 1;
+      }
+    } catch (error) {
+      logger.warn(`Failed to delete prototype workspace folder ${folderPath}: ${error.message}`);
+    }
+  });
+  return deletedCount;
+};
+
+const cleanupModelWorkspaceFolders = (modelId) => {
+  const targets = resolveModelFoldersAcrossUsers(modelId);
+  let deletedCount = 0;
+  targets.forEach((folderPath) => {
+    try {
+      if (deleteFolderSafely(folderPath)) {
+        deletedCount += 1;
+      }
+    } catch (error) {
+      logger.warn(`Failed to delete model workspace folder ${folderPath}: ${error.message}`);
+    }
+  });
+  return deletedCount;
+};
+
+const shouldSkipSensitiveFile = (entryName) => {
+  const name = String(entryName || '').trim();
+  if (!name) return true;
+  const lower = name.toLowerCase();
+  if (SECRET_LIKE_BASENAMES.has(lower)) return true;
+  if (lower.startsWith('.env.')) return true; // .env.*, .envrc, etc.
+  const ext = path.extname(lower);
+  if (SECRET_LIKE_EXTENSIONS.has(ext)) return true;
+  return false;
+};
 
 const listTextFilesRecursively = (rootPath) => {
   const stack = [rootPath];
@@ -97,6 +207,7 @@ const listTextFilesRecursively = (rootPath) => {
         continue;
       }
       if (!entry.isFile()) continue;
+      if (shouldSkipSensitiveFile(entry.name)) continue;
 
       const ext = path.extname(entry.name).toLowerCase();
       if (ext && !ALLOWED_TEXT_EXTENSIONS.has(ext)) continue;
@@ -107,9 +218,14 @@ const listTextFilesRecursively = (rootPath) => {
   return files;
 };
 
-const readPrototypeCodeFromPrototypesPath = (userId, prototypeName) => {
-  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/var/lib/autowrx/prototypes';
-  const prototypeFolder = path.join(prototypesRoot, String(userId), sanitizePrototypeFolderName(prototypeName));
+const readPrototypeCodeFromPrototypesPath = (userId, modelId, prototypeName) => {
+  const prototypesRoot = coderConfig.getCoderConfigSync().prototypesPath || '/opt/autowrx/prototypes';
+  const prototypeFolder = path.join(
+    prototypesRoot,
+    String(userId),
+    String(modelId || ''),
+    sanitizePrototypeFolderName(prototypeName),
+  );
 
   if (!fs.existsSync(prototypeFolder)) {
     return {
@@ -347,8 +463,8 @@ const deletePrototypeById = async (id, actionOwner) => {
     throw new ApiError(httpStatus.NOT_FOUND, 'Prototype not found');
   }
 
+  cleanupPrototypeWorkspaceFolders(prototype.model_id, prototype.name);
   prototype.action_owner = actionOwner;
-
   await prototype.deleteOne();
 };
 
@@ -442,19 +558,18 @@ const listPopularPrototypes = async () => {
  * Read prototype code from the user's prototypes workspace path and compute used APIs.
  * @param {string} id
  * @param {string} userId
- * @returns {Promise<{code: string, folderPath: string, source: string, usedApiNames: string[]}>}
+ * @returns {Promise<{folderPath: string, source: string, usedApiNames: string[]}>}
  */
 const getPrototypeUsedApisFromWorkspace = async (id, userId) => {
   const prototype = await getPrototypeById(id, userId);
   const modelId = prototype.model_id?._id || prototype.model_id?.id || prototype.model_id;
-  const codeData = readPrototypeCodeFromPrototypesPath(userId, prototype.name);
+  const codeData = readPrototypeCodeFromPrototypesPath(userId, modelId, prototype.name);
 
   const cvi = await apiService.computeVSSApi(modelId);
   const apiList = apiService.parseCvi(cvi);
   const usedApiNames = apiService.getUsedApis(codeData.code || '', apiList);
 
   return {
-    code: codeData.code || '',
     folderPath: codeData.folderPath,
     source: codeData.source,
     usedApiNames,
@@ -473,6 +588,7 @@ const deleteMany = async (filter, actionOwner) => {
   const prototypes = (await Prototype.find(filter)).filter((prototype) => prototype);
   await Promise.all(
     prototypes.map(async (prototype) => {
+      cleanupPrototypeWorkspaceFolders(prototype.model_id, prototype.name);
       prototype.action_owner = actionOwner;
       await prototype.deleteOne();
     })
@@ -490,3 +606,4 @@ module.exports.listPopularPrototypes = listPopularPrototypes;
 module.exports.bulkCreatePrototypes = bulkCreatePrototypes;
 module.exports.deleteMany = deleteMany;
 module.exports.getPrototypeUsedApisFromWorkspace = getPrototypeUsedApisFromWorkspace;
+module.exports.cleanupModelWorkspaceFolders = cleanupModelWorkspaceFolders;

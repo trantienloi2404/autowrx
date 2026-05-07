@@ -22,7 +22,7 @@ import {
 } from '@/components/atoms/select'
 import { useToast } from '@/components/molecules/toaster/use-toast'
 import default_journey from '@/data/default_journey'
-import { SAMPLE_PROJECTS } from '@/data/sampleProjects'
+import { listProjectTemplates } from '@/services/projectTemplate.service'
 import useListModelPrototypes from '@/hooks/useListModelPrototypes'
 import useListVSSVersions from '@/hooks/useListVSSVersions'
 import useSelfProfileQuery from '@/hooks/useSelfProfile'
@@ -39,11 +39,6 @@ import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 import { TbLoader } from 'react-icons/tb'
 import { useNavigate } from 'react-router-dom'
 
-const DEFAULT_LANGUAGE = SAMPLE_PROJECTS[0]?.language ?? 'python'
-const DEFAULT_CODE =
-    typeof SAMPLE_PROJECTS[0]?.data === 'string'
-        ? SAMPLE_PROJECTS[0].data
-        : JSON.stringify(SAMPLE_PROJECTS[0]?.data ?? '')
 
 interface FormNewPrototypeProps {
     onClose?: () => void
@@ -68,6 +63,20 @@ const FormNewPrototype = ({
     const navigate = useNavigate()
     const { toast } = useToast()
     const { data: currentUser, isLoading: isCurrentUserLoading } = useSelfProfileQuery()
+
+    const { data: projectTemplatesData, isLoading: isLoadingTemplates } = useQuery({
+        queryKey: ['project-templates-list'],
+        queryFn: () => listProjectTemplates({ limit: 100, page: 1 }),
+    })
+
+    const firstTemplate = useMemo(() => {
+        const t = projectTemplatesData?.results?.[0]
+        if (!t) return { language: 'python', code: '' }
+        try {
+            const parsed = JSON.parse(t.data)
+            return { language: parsed.language || 'python', code: parsed.code || '' }
+        } catch { return { language: 'python', code: '' } }
+    }, [projectTemplatesData])
 
     const { data: ownedModelsData, isLoading: isFetchingOwnedModels } = useQuery({
         queryKey: ['listModelLiteOwned', currentUser?.id],
@@ -155,13 +164,27 @@ const FormNewPrototype = ({
     const { isDuplicate: isDuplicatePrototypeName, suggestedName: suggestedPrototypeName } =
         useDuplicateNameCheck(prototypeName, existingPrototypeNames)
 
+    const ownedModelNames = useMemo(
+        () => ownedModelsData?.results?.map((m) => m.name) ?? [],
+        [ownedModelsData],
+    )
+
+    const [debouncedModelName, setDebouncedModelName] = useState('')
+    useEffect(() => {
+        const timer = setTimeout(() => setDebouncedModelName(newModelName), 300)
+        return () => clearTimeout(timer)
+    }, [newModelName])
+
+    const { isDuplicate: isDuplicateModelName, suggestedName: suggestedModelName } =
+        useDuplicateNameCheck(debouncedModelName, ownedModelNames)
+
     const disabled =
         loading ||
         uploading ||
+        isLoadingTemplates ||
         !prototypeName.trim() ||
-        (isCreatingNewModel ? !newModelName.trim() : !selectedModelId) ||
-        isDuplicatePrototypeName ||
-        !!error
+        (isCreatingNewModel ? !newModelName.trim() || isDuplicateModelName : !selectedModelId) ||
+        isDuplicatePrototypeName
 
     const handleSubmit = async (e: FormEvent<HTMLFormElement>) => {
         e.preventDefault()
@@ -189,10 +212,10 @@ const FormNewPrototype = ({
             const body = {
                 model_id: modelId,
                 name: prototypeName.trim(),
-                language: DEFAULT_LANGUAGE,
+                language: firstTemplate.language,
                 state: 'development',
                 apis: { VSC: [], VSS: [] },
-                code: code ?? DEFAULT_CODE,
+                code: code ?? firstTemplate.code,
                 complexity_level: 3,
                 customer_journey: default_journey,
                 description: { problem: '', says_who: '', solution: '', status: '' },
@@ -265,6 +288,7 @@ const FormNewPrototype = ({
                     label="Model"
                     wrapperClassName="mt-4"
                     onValueChange={(value) => {
+                        setError('')
                         if (value === 'new') {
                             setIsCreatingNewModel(true)
                             setSelectedModelId('new')
@@ -291,11 +315,24 @@ const FormNewPrototype = ({
                     <DaInput
                         name="newModelName"
                         value={newModelName}
-                        onChange={(e) => setNewModelName(e.target.value)}
+                        onChange={(e) => {
+                            setNewModelName(e.target.value)
+                            setError('')
+                        }}
                         placeholder="Model name"
                         label="Model Name *"
                         inputClassName="bg-white"
                     />
+                    {isDuplicateModelName && (
+                        <DaDuplicateNameHint
+                            message="A model with this name already exists"
+                            suggestedName={suggestedModelName}
+                            onApplySuggestion={(name) => {
+                                setNewModelName(name)
+                                setError('')
+                            }}
+                        />
+                    )}
 
                     {/* Signal */}
                     <div>

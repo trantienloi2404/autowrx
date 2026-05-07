@@ -160,6 +160,9 @@ function isSpam(text) {
   if (t.includes('using host libthread_db')) return true;
   if (t.includes('in ?? ()')) return true;
   if (t.includes('x86_64-linux-gnu')) return true;
+  if (t.includes('missing auto-load script')) return true;
+  if (t.includes('.debug_gdb_scripts')) return true;
+  if (t.includes('auto-load python-scripts')) return true;
   return false;
 }
 

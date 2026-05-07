@@ -1,0 +1,1 @@
+Open backend port 3200 so Coder workspaces can reach `ws://host.docker.internal:3200/v2/system/coder/runner/ws`.

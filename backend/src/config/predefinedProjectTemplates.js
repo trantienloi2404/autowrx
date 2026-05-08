@@ -62,6 +62,79 @@ const PYTHON_MULTI_FILES = [
   },
 ];
 
+const DEFAULT_RUST_MAIN = `use std::collections::HashMap;
+use std::thread;
+use std::time::Duration;
+
+// ===== Enum =====
+#[derive(Debug)]
+enum Status {
+    Idle,
+    Running,
+}
+
+// ===== Struct / object =====
+#[derive(Debug)]
+struct Sensor {
+    id: i32,
+    value: f32,
+    active: bool,
+}
+
+fn main() {
+    // ===== Primitives =====
+    let mut n_int = 42;
+    let mut pi_float = 3.14159;
+    let _is_enabled = true;
+    let _name = String::from("autowrx");
+
+    // ===== Container =====
+    let mut nums = vec![1, 2, 3];
+    let mut config = HashMap::new();
+    config.insert(String::from("retry"), 3);
+
+    // ===== Enum =====
+    let status = Status::Running;
+
+    // ===== Object =====
+    let sensor = Sensor {
+        id: 1,
+        value: 88.6,
+        active: true,
+    };
+
+    let mut counter = 0;
+
+    loop {
+        counter += 1;
+
+        n_int += 1;
+        pi_float += 0.01;
+
+        nums[0] = counter % 10;
+
+        let retry = *config.get("retry").unwrap_or(&0);
+        config.insert(String::from("retry"), (retry % 5) + 1);
+
+        println!("counter={}", counter);
+
+        /*
+        println!(
+            "tick={}, n_int={}, pi_float={}, nums=[{},{},{}], retry={}, status={:?}, sensor={{id={}, value={}, active={}}}",
+            counter,
+            n_int,
+            pi_float,
+            nums[0], nums[1], nums[2],
+            config.get("retry").unwrap_or(&0),
+            status,
+            sensor.id, sensor.value, sensor.active
+        );
+        */
+
+        thread::sleep(Duration::from_secs(1));
+    }
+}`;
+
 const RUST_MULTI_FILES = [
   {
     type: 'folder',
@@ -75,7 +148,7 @@ const RUST_MULTI_FILES = [
       {
         type: 'file',
         name: 'README.md',
-        content: '# Rust Project\n\nMinimal multi-file Rust hello world template.\n',
+        content: '# Rust Project\n\nMinimal Rust template.\n',
       },
       {
         type: 'folder',
@@ -84,14 +157,7 @@ const RUST_MULTI_FILES = [
           {
             type: 'file',
             name: 'main.rs',
-            content:
-              'mod greeting;\n\nfn main() {\n    greeting::print_with_typing_effect(greeting::get_greeting(), 100);\n    println!();\n}\n',
-          },
-          {
-            type: 'file',
-            name: 'greeting.rs',
-            content:
-              'use std::{thread, time::Duration};\n\npub fn get_greeting() -> &\'static str {\n    "Hello, World from Rust multiple files!"\n}\n\npub fn print_with_typing_effect(text: &str, delay_ms: u64) {\n    for ch in text.chars() {\n        print!("{ch}");\n        let _ = std::io::Write::flush(&mut std::io::stdout());\n        thread::sleep(Duration::from_millis(delay_ms));\n    }\n}\n',
+            content: DEFAULT_RUST_MAIN,
           },
         ],
       },
@@ -220,8 +286,8 @@ const PREDEFINED_PROJECT_TEMPLATES = [
     data: JSON.stringify({ language: 'python', code: JSON.stringify(PYTHON_MULTI_FILES) }),
   },
   {
-    name: 'Rust Multiple Files (Beta)',
-    description: 'A minimal Rust multi-file hello world project',
+    name: 'Rust Project (Beta)',
+    description: 'A minimal Rust template project',
     data: JSON.stringify({ language: 'rust', code: JSON.stringify(RUST_MULTI_FILES) }),
   },
   {

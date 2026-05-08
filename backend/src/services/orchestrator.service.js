@@ -340,7 +340,7 @@ const prepareWorkspaceForPrototype = async (userId, prototypeId) => {
 const RUN_KIND_COMMANDS = {
   'python-main': 'python3 -u main.py',
   'cpp-main':
-    'g++ -g -O0 -std=c++17 -Igenerated src/main.cpp generated/kuksa/val/v1/types.pb.cc generated/kuksa/val/v1/types.grpc.pb.cc generated/kuksa/val/v1/val.pb.cc generated/kuksa/val/v1/val.grpc.pb.cc $(pkg-config --libs grpc++ grpc protobuf) -pthread -o main && ./main',
+    "g++ -g -O0 -std=c++17 -pthread $(find . -type f \\( -name \"*.pb.h\" -o -name \"*.grpc.pb.h\" \\) | sed 's|/[^/]*$||' | sed 's|^\\./||' | awk -F'/kuksa/' '{print $1}' | sort -u | sed 's|^|-I./|') $(find . \\( -name \"*.cpp\" -o -name \"*.cc\" \\)) -o main $(pkg-config --cflags --libs protobuf grpc++ 2>/dev/null) && ./main",
   'rust-main': 'cargo run',
 };
 

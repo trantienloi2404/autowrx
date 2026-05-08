@@ -70,14 +70,12 @@ const RUST_MULTI_FILES = [
       {
         type: 'file',
         name: 'Cargo.toml',
-        content:
-          '[package]\nname = "rust_project"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n',
+        content: '[package]\nname = "rust_project"\nversion = "0.1.0"\nedition = "2021"\n\n[dependencies]\n',
       },
       {
         type: 'file',
         name: 'README.md',
-        content:
-          '# Rust Project\n\nMinimal multi-file Rust hello world template.\n',
+        content: '# Rust Project\n\nMinimal multi-file Rust hello world template.\n',
       },
       {
         type: 'folder',
@@ -102,12 +100,85 @@ const RUST_MULTI_FILES = [
 ];
 
 const DEFAULT_CPP_MAIN = `#include <iostream>
+#include <vector>
+#include <map>
+#include <string>
 #include <thread>
-#include "greeting.h"
-
+#include <chrono>
+ 
+// ===== Enum =====
+enum class Status {
+    IDLE,
+    RUNNING
+};
+ 
+// Convert enum -> string
+std::string statusToString(Status s) {
+    switch (s) {
+        case Status::IDLE: return "idle";
+        case Status::RUNNING: return "running";
+        default: return "unknown";
+    }
+}
+ 
+// ===== Struct / object =====
+struct Sensor {
+    int id;
+    float value;
+    bool active;
+};
+ 
 int main() {
-    printWithTypingEffect(getGreeting(), 100);
-    std::cout << std::endl;
+    // ===== Primitives =====
+    int n_int = 42;
+    double pi_float = 3.14159;
+    bool is_enabled = true;
+    std::string name = "autowrx";
+ 
+    // ===== Container =====
+    std::vector<int> nums = {1, 2, 3};
+    std::map<std::string, int> config = {
+        {"retry", 3}
+    };
+ 
+    // ===== Enum =====
+    Status status = Status::RUNNING;
+ 
+    // ===== Object =====
+    Sensor sensor = {1, 88.6f, true};
+ 
+    int counter = 0;
+ 
+    while (true) {
+        counter++;
+ 
+        n_int += 1;
+        pi_float += 0.01;
+ 
+        nums[0] = counter % 10;
+ 
+        config["retry"] = (config["retry"] % 5) + 1;
+ 
+        std::cout << "counter=" << counter << std::endl;
+ 
+        /*
+        std::cout
+            << "tick=" << counter
+            << ", n_int=" << n_int
+            << ", pi_float=" << pi_float
+            << ", nums=[" << nums[0] << "," << nums[1] << "," << nums[2] << "]"
+            << ", retry=" << config["retry"]
+            << ", status=" << statusToString(status)
+            << ", sensor={id=" << sensor.id
+            << ", value=" << sensor.value
+            << ", active=" << std::boolalpha << sensor.active
+            << "}"
+            << std::endl;
+        */
+ 
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+ 
     return 0;
 }`;
 
@@ -120,24 +191,12 @@ const CPP_MULTI_FILES = [
         type: 'file',
         name: 'CMakeLists.txt',
         content:
-          'cmake_minimum_required(VERSION 3.16)\nproject(cpp_project)\n\nset(CMAKE_CXX_STANDARD 17)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n\nfind_package(Threads REQUIRED)\n\nadd_executable(main src/main.cpp src/greeting.cpp)\ntarget_include_directories(main PRIVATE include)\ntarget_link_libraries(main PRIVATE Threads::Threads)\n',
+          'cmake_minimum_required(VERSION 3.16)\nproject(cpp_project)\n\nset(CMAKE_CXX_STANDARD 17)\nset(CMAKE_CXX_STANDARD_REQUIRED ON)\n\nfind_package(Threads REQUIRED)\n\nadd_executable(main src/main.cpp)\ntarget_link_libraries(main PRIVATE Threads::Threads)\n',
       },
       {
         type: 'file',
         name: 'README.md',
-        content: '# C++ Project\n\nMinimal multi-file C++ hello world template.\n',
-      },
-      {
-        type: 'folder',
-        name: 'include',
-        items: [
-          {
-            type: 'file',
-            name: 'greeting.h',
-            content:
-              '#pragma once\n\n#include <chrono>\n\nconst char* getGreeting();\nvoid printWithTypingEffect(const char* text, int delay_ms = 100);\n',
-          },
-        ],
+        content: '# C++ Project\n\nMinimal C++ template.\n',
       },
       {
         type: 'folder',
@@ -147,12 +206,6 @@ const CPP_MULTI_FILES = [
             type: 'file',
             name: 'main.cpp',
             content: DEFAULT_CPP_MAIN,
-          },
-          {
-            type: 'file',
-            name: 'greeting.cpp',
-            content:
-              '#include "greeting.h"\n#include <iostream>\n#include <thread>\n\nconst char* getGreeting() {\n    return "Hello, World from C++ multiples files!";\n}\n\nvoid printWithTypingEffect(const char* text, int delay_ms) {\n    for (const char* p = text; *p; ++p) {\n        std::cout << *p << std::flush;\n        std::this_thread::sleep_for(std::chrono::milliseconds(delay_ms));\n    }\n}\n',
           },
         ],
       },
@@ -172,8 +225,8 @@ const PREDEFINED_PROJECT_TEMPLATES = [
     data: JSON.stringify({ language: 'rust', code: JSON.stringify(RUST_MULTI_FILES) }),
   },
   {
-    name: 'C++ Multiples Files (Beta)',
-    description: 'A minimal C++ multi-file hello world project',
+    name: 'C++ Project (Beta)',
+    description: 'A minimal C++ template project',
     data: JSON.stringify({ language: 'cpp', code: JSON.stringify(CPP_MULTI_FILES) }),
   },
   {

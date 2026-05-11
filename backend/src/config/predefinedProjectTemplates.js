@@ -279,21 +279,98 @@ const CPP_MULTI_FILES = [
   },
 ];
 
+const DEFAULT_WIDGET_CONFIG = JSON.stringify({
+  autorun: false,
+  widgets: [
+    {
+      plugin: 'Builtin',
+      widget: 'Embedded-Widget',
+      options: {
+        api: 'Vehicle.Body.Lights.Beam.Low.IsOn',
+        defaultImgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_off.png',
+        displayExactMatch: true,
+        valueMaps: [
+          {
+            value: true,
+            imgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_on.png',
+          },
+          {
+            value: false,
+            imgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_off.png',
+          },
+        ],
+        url: 'https://store-be.digitalauto.tech/data/store-be/Image%20by%20Signal%20value/latest/index/index.html',
+        iconURL: 'https://upload.digitalauto.tech/data/store-be/3c3685b3-0b58-4f75-820e-9af0180cf3f0.png',
+      },
+      boxes: [2, 3, 7, 8],
+      path: '',
+    },
+    {
+      plugin: 'Builtin',
+      widget: 'Embedded-Widget',
+      options: {
+        url: 'https://store-be.digitalauto.tech/data/store-be/Terminal/latest/terminal/index.html',
+        iconURL: 'https://upload.digitalauto.tech/data/store-be/e991ea29-5fbf-42e9-9d3d-cceae23600f0.png',
+      },
+      boxes: [1, 6],
+      path: '',
+    },
+    {
+      plugin: 'Builtin',
+      widget: 'Embedded-Widget',
+      options: {
+        api: 'Vehicle.Body.Lights.Beam.Low.IsOn',
+        lineColor: '#005072',
+        dataUpdateInterval: '1000',
+        maxDataPoints: '30',
+        url: 'https://store-be.digitalauto.tech/data/store-be/Chart%20Signal%20Widget/latest/index/index.html',
+        iconURL: 'https://upload.digitalauto.tech/data/store-be/f25ceb29-b9e8-470e-897a-4d843e16a0cf.png',
+      },
+      boxes: [4, 5],
+      path: '',
+    },
+    {
+      plugin: 'Builtin',
+      widget: 'Embedded-Widget',
+      options: {
+        apis: ['Vehicle.Body.Lights.Beam.Low.IsOn'],
+        vss_json: 'https://bewebstudio.digitalauto.tech/data/projects/sHQtNwric0H7/vss_rel_4.0.json',
+        url: 'https://store-be.digitalauto.tech/data/store-be/Signal%20List%20Settable/latest/table-settable/index.html',
+        iconURL: 'https://upload.digitalauto.tech/data/store-be/dccabc84-2128-4e5d-9e68-bc20333441c4.png',
+      },
+      boxes: [9, 10],
+      path: '',
+    },
+  ],
+});
+
 const PREDEFINED_PROJECT_TEMPLATES = [
   {
     name: 'Python Multiple Files (Beta)',
     description: 'A simple Python project with multiple files demonstrating basic structure',
-    data: JSON.stringify({ language: 'python', code: JSON.stringify(PYTHON_MULTI_FILES) }),
+    data: JSON.stringify({
+      language: 'python',
+      code: JSON.stringify(PYTHON_MULTI_FILES),
+      widget_config: DEFAULT_WIDGET_CONFIG,
+    }),
   },
   {
     name: 'Rust Project (Beta)',
     description: 'A minimal Rust template project',
-    data: JSON.stringify({ language: 'rust', code: JSON.stringify(RUST_MULTI_FILES) }),
+    data: JSON.stringify({
+      language: 'rust',
+      code: JSON.stringify(RUST_MULTI_FILES),
+      widget_config: DEFAULT_WIDGET_CONFIG,
+    }),
   },
   {
     name: 'C++ Project (Beta)',
     description: 'A minimal C++ template project',
-    data: JSON.stringify({ language: 'cpp', code: JSON.stringify(CPP_MULTI_FILES) }),
+    data: JSON.stringify({
+      language: 'cpp',
+      code: JSON.stringify(CPP_MULTI_FILES),
+      widget_config: DEFAULT_WIDGET_CONFIG,
+    }),
   },
   {
     name: 'Empty Project',

@@ -40,8 +40,8 @@ function collectWatchNamesFromRustSource(cwd) {
   for (const sourcePath of candidatePaths) {
     try {
       const content = fs.readFileSync(sourcePath, 'utf8');
-      // Grab `let <ident> = ...;` or `let mut <ident> = ...;`
-      const re = /\blet\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=]+)?\s*=\s*/g;
+      // Only match declarations at the beginning of a line (outermost scope)
+      const re = /^let\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=]+)?\s*=\s*/gm;
       let m = re.exec(content);
       while (m) {
         const name = String(m[1] || '').trim();
@@ -338,15 +338,10 @@ class GdbWrapper {
     let frameResp = await this.send('-stack-info-frame');
     const frame = parseFrame(frameResp);
 
-    let varsResp = '';
-    try {
-      varsResp = await this.send('-stack-list-variables --all-values');
-    } catch {
-      varsResp = await this.send('-stack-list-variables --simple-values');
-    }
-    const vars = parseVariables(varsResp);
+    const vars = {};
 
-    if (Object.keys(vars).length === 0 && this.watchNames.length > 0) {
+    // For Rust, we now strictly only watch top-level variables found in source
+    if (this.watchNames.length > 0) {
       for (const name of this.watchNames) {
         try {
           const valueResp = await this.send(`-data-evaluate-expression ${name}`);

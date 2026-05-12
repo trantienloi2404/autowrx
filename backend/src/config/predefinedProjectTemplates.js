@@ -5,45 +5,65 @@ const DEFAULT_PYTHON_APP = `import time
 import asyncio
 import signal
 
-from sdv.vdb.reply import DataPointReply
-from sdv.vehicle_app import VehicleApp
-from vehicle import Vehicle, vehicle
-
-class TestApp(VehicleApp):
-
-    def __init__(self, vehicle_client: Vehicle):
-        super().__init__()
-        self.Vehicle = vehicle_client
-
-    async def on_start(self):
-        # on app started, this function will be trigger, your logic SHOULD start from HERE
-        while True:
-            # sleep for 2 second
-            await asyncio.sleep(2)
-            # write an actuator signal with value
-            await self.Vehicle.Body.Lights.Beam.Low.IsOn.set(True)
-            await asyncio.sleep(1)
-            # read an actuator back
-            value = (await self.Vehicle.Body.Lights.Beam.Low.IsOn.get()).value
-            print("Light value ", value)
-
-            await asyncio.sleep(2)
-            # write an actuator signal with value
-            await self.Vehicle.Body.Lights.Beam.Low.IsOn.set(False)
-            await asyncio.sleep(1)
-            # read an actuator back
-            value = (await self.Vehicle.Body.Lights.Beam.Low.IsOn.get()).value
-            print("Light value ", value)
-
 async def main():
-    vehicle_app = TestApp(vehicle)
-    await vehicle_app.run()
+    # --- These variables will be captured by the AutoWRX Dashboard ---
+    battery_soc = 85.0      # Battery State of Charge (%)
+    vehicle_speed = 0.0     # Speed (km/h)
+    motor_temp = 35.0       # Motor temperature (°C)
+    odometer = 12450.0      # Mileage (km)
+    is_charging = False     # Charging status
+    is_light_on = False     # Light status (for Dashboard testing)
 
+    tick = 0
 
-LOOP = asyncio.get_event_loop()
-LOOP.add_signal_handler(signal.SIGTERM, LOOP.stop)
-LOOP.run_until_complete(main())
-LOOP.close()`;
+    print("--- Python EV System Started ---")
+    print("Monitoring parameters via IoT 'Cloud'...")
+
+    while True:
+        tick += 1
+
+        # 1. Simulate driving or charging logic
+        if is_charging:
+            battery_soc += 0.5
+            vehicle_speed = 0.0
+            motor_temp -= 0.1
+            if battery_soc >= 100.0:
+                battery_soc = 100.0
+                is_charging = False
+                print("[System] Battery full! Charging stopped.")
+        else:
+            # Simulate driving
+            vehicle_speed = 60.0 + (tick % 15.0) # Fluctuating speed
+            battery_soc -= 0.05 * (vehicle_speed / 60.0)
+            motor_temp += 0.2
+            odometer += vehicle_speed / 3600.0 # Distance traveled in 1 second
+
+            # Low battery warning
+            if battery_soc <= 15.0:
+                print(f"[Warning] Low battery ({battery_soc:.1f}%)! Searching for charging station...")
+                is_charging = True # Automatically plug in for demo purposes
+
+        # 2. Automatic light control logic (IoT)
+        if tick % 10 == 0:
+            is_light_on = not is_light_on
+            print(f"[IoT] Vehicle lights automatically {'turned ON' if is_light_on else 'turned OFF'}.")
+
+        # 3. Simulate sending data to Cloud every 5 seconds (IoT Telemetry)
+        if tick % 5 == 0:
+            print("\\n[Cloud IoT Sync]")
+            print(f'{{ "device_id": "EV-PYTHON-001", "speed": {vehicle_speed:.1f}, "soc": {battery_soc:.2f}, "odo": {odometer:.2f}, "temp": {motor_temp:.1f} }}')
+            print("----------------------------\\n")
+
+        await asyncio.sleep(1)
+
+if __name__ == "__main__":
+    LOOP = asyncio.get_event_loop()
+    try:
+        LOOP.add_signal_handler(signal.SIGTERM, LOOP.stop)
+    except NotImplementedError:
+        pass # Signal handlers not supported on all platforms
+    LOOP.run_until_complete(main())
+    LOOP.close()`;
 
 const PYTHON_MULTI_FILES = [
   {
@@ -62,78 +82,71 @@ const PYTHON_MULTI_FILES = [
   },
 ];
 
-const DEFAULT_RUST_MAIN = `use std::collections::HashMap;
-use std::thread;
+const DEFAULT_RUST_MAIN = `use std::thread;
 use std::time::Duration;
 
-// ===== Enum =====
-#[derive(Debug)]
-enum Status {
-    Idle,
-    Running,
-}
-
-// ===== Struct / object =====
-#[derive(Debug)]
-struct Sensor {
-    id: i32,
-    value: f32,
-    active: bool,
-}
-
+// Simulate EV system state
 fn main() {
-    // ===== Primitives =====
-    let mut n_int = 42;
-    let mut pi_float = 3.14159;
-    let _is_enabled = true;
-    let _name = String::from("autowrx");
+    // --- These variables will be captured by the AutoWRX Dashboard ---
+    let mut battery_soc = 85.0;     // Battery State of Charge (%)
+    #[allow(unused_assignments)]
+    let mut vehicle_speed = 0.0;    // Speed (km/h)
+    let mut motor_temp = 35.0;      // Motor temperature (°C)
+    let mut odometer = 12450.0;     // Mileage (km)
+    let mut is_charging = false;    // Charging status
+    let mut is_light_on = false;    // Light status (for Dashboard testing)
 
-    // ===== Container =====
-    let mut nums = vec![1, 2, 3];
-    let mut config = HashMap::new();
-    config.insert(String::from("retry"), 3);
+    let mut tick = 0;
 
-    // ===== Enum =====
-    let status = Status::Running;
-
-    // ===== Object =====
-    let sensor = Sensor {
-        id: 1,
-        value: 88.6,
-        active: true,
-    };
-
-    let mut counter = 0;
+    println!("--- Rust EV System Started ---");
+    println!("Monitoring parameters via IoT 'Cloud'...");
 
     loop {
-        counter += 1;
+        tick += 1;
 
-        n_int += 1;
-        pi_float += 0.01;
+        // 1. Simulate driving or charging logic
+        if is_charging {
+            battery_soc += 0.5;
+            vehicle_speed = 0.0;
+            motor_temp -= 0.1;
+            if battery_soc >= 100.0 {
+                battery_soc = 100.0;
+                is_charging = false;
+                println!("[System] Battery full! Charging stopped.");
+            }
+        } else {
+            // Simulate driving
+            vehicle_speed = 60.0 + (tick as f32 % 15.0); // Fluctuating speed
+            battery_soc -= 0.05 * (vehicle_speed / 60.0);
+            motor_temp += 0.2;
+            odometer += vehicle_speed / 3600.0; // Distance traveled in 1 second
 
-        nums[0] = counter % 10;
+            // Low battery warning
+            if battery_soc <= 15.0 {
+                println!("[Warning] Low battery ({:.1}%)! Searching for charging station...", battery_soc);
+                is_charging = true; // Automatically plug in for demo purposes
+            }
+        }
 
-        let retry = *config.get("retry").unwrap_or(&0);
-        config.insert(String::from("retry"), (retry % 5) + 1);
+        // 2. Automatic light control logic (IoT)
+        if tick % 10 == 0 {
+            is_light_on = !is_light_on;
+            println!("[IoT] Vehicle lights automatically {}.", if is_light_on { "turned ON" } else { "turned OFF" });
+        }
 
-        println!("counter={}", counter);
+        // 3. Simulate sending data to Cloud every 5 seconds (IoT Telemetry)
+        if tick % 5 == 0 {
+            println!("\\n[Cloud IoT Sync]");
+            println!("{{ \\"device_id\\": \\"EV-RUST-001\\", \\"speed\\": {:.1}, \\"soc\\": {:.2}, \\"odo\\": {:.2}, \\"temp\\": {:.1} }}", 
+                     vehicle_speed, battery_soc, odometer, motor_temp);
+            println!("----------------------------\\n");
+        }
 
-        /*
-        println!(
-            "tick={}, n_int={}, pi_float={}, nums=[{},{},{}], retry={}, status={:?}, sensor={{id={}, value={}, active={}}}",
-            counter,
-            n_int,
-            pi_float,
-            nums[0], nums[1], nums[2],
-            config.get("retry").unwrap_or(&0),
-            status,
-            sensor.id, sensor.value, sensor.active
-        );
-        */
-
+        // Sleep for 1 second per loop
         thread::sleep(Duration::from_secs(1));
     }
-}`;
+}
+`;
 
 const RUST_MULTI_FILES = [
   {
@@ -166,85 +179,71 @@ const RUST_MULTI_FILES = [
 ];
 
 const DEFAULT_CPP_MAIN = `#include <iostream>
-#include <vector>
-#include <map>
-#include <string>
 #include <thread>
 #include <chrono>
- 
-// ===== Enum =====
-enum class Status {
-    IDLE,
-    RUNNING
-};
- 
-// Convert enum -> string
-std::string statusToString(Status s) {
-    switch (s) {
-        case Status::IDLE: return "idle";
-        case Status::RUNNING: return "running";
-        default: return "unknown";
-    }
-}
- 
-// ===== Struct / object =====
-struct Sensor {
-    int id;
-    float value;
-    bool active;
-};
- 
+#include <string>
+#include <iomanip>
+
 int main() {
-    // ===== Primitives =====
-    int n_int = 42;
-    double pi_float = 3.14159;
-    bool is_enabled = true;
-    std::string name = "autowrx";
- 
-    // ===== Container =====
-    std::vector<int> nums = {1, 2, 3};
-    std::map<std::string, int> config = {
-        {"retry", 3}
-    };
- 
-    // ===== Enum =====
-    Status status = Status::RUNNING;
- 
-    // ===== Object =====
-    Sensor sensor = {1, 88.6f, true};
- 
-    int counter = 0;
- 
+    // --- These variables will be captured by the AutoWRX Dashboard ---
+    float battery_soc = 85.0f;     // Battery State of Charge (%)
+    float vehicle_speed = 0.0f;    // Speed (km/h)
+    float motor_temp = 35.0f;      // Motor temperature (°C)
+    double odometer = 12450.0;     // Mileage (km)
+    bool is_charging = false;      // Charging status
+    bool is_light_on = false;      // Light status (for Dashboard testing)
+
+    int tick = 0;
+
+    std::cout << "--- C++ EV System Started ---" << std::endl;
+    std::cout << "Monitoring parameters via IoT 'Cloud'..." << std::endl;
+
     while (true) {
-        counter++;
- 
-        n_int += 1;
-        pi_float += 0.01;
- 
-        nums[0] = counter % 10;
- 
-        config["retry"] = (config["retry"] % 5) + 1;
- 
-        std::cout << "counter=" << counter << std::endl;
- 
-        /*
-        std::cout
-            << "tick=" << counter
-            << ", n_int=" << n_int
-            << ", pi_float=" << pi_float
-            << ", nums=[" << nums[0] << "," << nums[1] << "," << nums[2] << "]"
-            << ", retry=" << config["retry"]
-            << ", status=" << statusToString(status)
-            << ", sensor={id=" << sensor.id
-            << ", value=" << sensor.value
-            << ", active=" << std::boolalpha << sensor.active
-            << "}"
-            << std::endl;
-        */
- 
+        tick++;
+
+        // 1. Simulate driving or charging logic
+        if (is_charging) {
+            battery_soc += 0.5f;
+            vehicle_speed = 0.0f;
+            motor_temp -= 0.1f;
+            if (battery_soc >= 100.0f) {
+                battery_soc = 100.0f;
+                is_charging = false;
+                std::cout << "[System] Battery full! Charging stopped." << std::endl;
+            }
+        } else {
+            // Simulate driving
+            vehicle_speed = 60.0f + (float)(tick % 15); // Fluctuating speed
+            battery_soc -= 0.05f * (vehicle_speed / 60.0f);
+            motor_temp += 0.2f;
+            odometer += (double)vehicle_speed / 3600.0; // Distance traveled in 1 second
+
+            // Low battery warning
+            if (battery_soc <= 15.0f) {
+                std::cout << "[Warning] Low battery (" << std::fixed << std::setprecision(1) << battery_soc << "%)! Searching for charging station..." << std::endl;
+                is_charging = true; // Automatically plug in for demo purposes
+            }
+        }
+
+        // 2. Automatic light control logic (IoT)
+        if (tick % 10 == 0) {
+            is_light_on = !is_light_on;
+            std::cout << "[IoT] Vehicle lights automatically " << (is_light_on ? "turned ON" : "turned OFF") << "." << std::endl;
+        }
+
+        // 3. Simulate sending data to Cloud every 5 seconds (IoT Telemetry)
+        if (tick % 5 == 0) {
+            std::cout << "\\n[Cloud IoT Sync]" << std::endl;
+            std::cout << "{ \\"device_id\\": \\"EV-CPP-001\\", \\"speed\\": " << std::fixed << std::setprecision(1) << vehicle_speed 
+                      << ", \\"soc\\": " << std::fixed << std::setprecision(2) << battery_soc 
+                      << ", \\"odo\\": " << std::fixed << std::setprecision(2) << odometer 
+                      << ", \\"temp\\": " << std::fixed << std::setprecision(1) << motor_temp << " }" << std::endl;
+            std::cout << "----------------------------\\n" << std::endl;
+        }
+
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
- 
+
     return 0;
 }`;
 
@@ -287,16 +286,14 @@ const DEFAULT_WIDGET_CONFIG = JSON.stringify({
       widget: 'Embedded-Widget',
       options: {
         api: 'Vehicle.Body.Lights.Beam.Low.IsOn',
-        defaultImgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_off.png',
-        displayExactMatch: true,
-        valueMaps: [
+        mappings: [
           {
-            value: true,
-            imgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_on.png',
+            value: 'true',
+            url: 'https://upload.digitalauto.tech/data/store-be/8354c03c-834c-4e83-93ef-952b614006f1.png',
           },
           {
-            value: false,
-            imgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_off.png',
+            value: 'false',
+            url: 'https://upload.digitalauto.tech/data/store-be/c9965d14-3d92-4ec2-9e2a-0639f7d38318.png',
           },
         ],
         url: 'https://store-be.digitalauto.tech/data/store-be/Image%20by%20Signal%20value/latest/index/index.html',

@@ -5,65 +5,45 @@ const DEFAULT_PYTHON_APP = `import time
 import asyncio
 import signal
 
+from sdv.vdb.reply import DataPointReply
+from sdv.vehicle_app import VehicleApp
+from vehicle import Vehicle, vehicle
+
+class TestApp(VehicleApp):
+
+    def __init__(self, vehicle_client: Vehicle):
+        super().__init__()
+        self.Vehicle = vehicle_client
+
+    async def on_start(self):
+        # on app started, this function will be trigger, your logic SHOULD start from HERE
+        while True:
+            # sleep for 2 second
+            await asyncio.sleep(2)
+            # write an actuator signal with value
+            await self.Vehicle.Body.Lights.Beam.Low.IsOn.set(True)
+            await asyncio.sleep(1)
+            # read an actuator back
+            value = (await self.Vehicle.Body.Lights.Beam.Low.IsOn.get()).value
+            print("Light value ", value)
+
+            await asyncio.sleep(2)
+            # write an actuator signal with value
+            await self.Vehicle.Body.Lights.Beam.Low.IsOn.set(False)
+            await asyncio.sleep(1)
+            # read an actuator back
+            value = (await self.Vehicle.Body.Lights.Beam.Low.IsOn.get()).value
+            print("Light value ", value)
+
 async def main():
-    # --- These variables will be captured by the AutoWRX Dashboard ---
-    battery_soc = 85.0      # Battery State of Charge (%)
-    vehicle_speed = 0.0     # Speed (km/h)
-    motor_temp = 35.0       # Motor temperature (°C)
-    odometer = 12450.0      # Mileage (km)
-    is_charging = False     # Charging status
-    is_light_on = False     # Light status (for Dashboard testing)
+    vehicle_app = TestApp(vehicle)
+    await vehicle_app.run()
 
-    tick = 0
 
-    print("--- Python EV System Started ---")
-    print("Monitoring parameters via IoT 'Cloud'...")
-
-    while True:
-        tick += 1
-
-        # 1. Simulate driving or charging logic
-        if is_charging:
-            battery_soc += 0.5
-            vehicle_speed = 0.0
-            motor_temp -= 0.1
-            if battery_soc >= 100.0:
-                battery_soc = 100.0
-                is_charging = False
-                print("[System] Battery full! Charging stopped.")
-        else:
-            # Simulate driving
-            vehicle_speed = 60.0 + (tick % 15.0) # Fluctuating speed
-            battery_soc -= 0.05 * (vehicle_speed / 60.0)
-            motor_temp += 0.2
-            odometer += vehicle_speed / 3600.0 # Distance traveled in 1 second
-
-            # Low battery warning
-            if battery_soc <= 15.0:
-                print(f"[Warning] Low battery ({battery_soc:.1f}%)! Searching for charging station...")
-                is_charging = True # Automatically plug in for demo purposes
-
-        # 2. Automatic light control logic (IoT)
-        if tick % 10 == 0:
-            is_light_on = not is_light_on
-            print(f"[IoT] Vehicle lights automatically {'turned ON' if is_light_on else 'turned OFF'}.")
-
-        # 3. Simulate sending data to Cloud every 5 seconds (IoT Telemetry)
-        if tick % 5 == 0:
-            print("\\n[Cloud IoT Sync]")
-            print(f'{{ "device_id": "EV-PYTHON-001", "speed": {vehicle_speed:.1f}, "soc": {battery_soc:.2f}, "odo": {odometer:.2f}, "temp": {motor_temp:.1f} }}')
-            print("----------------------------\\n")
-
-        await asyncio.sleep(1)
-
-if __name__ == "__main__":
-    LOOP = asyncio.get_event_loop()
-    try:
-        LOOP.add_signal_handler(signal.SIGTERM, LOOP.stop)
-    except NotImplementedError:
-        pass # Signal handlers not supported on all platforms
-    LOOP.run_until_complete(main())
-    LOOP.close()`;
+LOOP = asyncio.get_event_loop()
+LOOP.add_signal_handler(signal.SIGTERM, LOOP.stop)
+LOOP.run_until_complete(main())
+LOOP.close()`;
 
 const PYTHON_MULTI_FILES = [
   {
@@ -181,17 +161,16 @@ const RUST_MULTI_FILES = [
 const DEFAULT_CPP_MAIN = `#include <iostream>
 #include <thread>
 #include <chrono>
-#include <string>
 #include <iomanip>
 
 int main() {
     // --- These variables will be captured by the AutoWRX Dashboard ---
-    float battery_soc = 85.0f;     // Battery State of Charge (%)
-    float vehicle_speed = 0.0f;    // Speed (km/h)
-    float motor_temp = 35.0f;      // Motor temperature (°C)
-    double odometer = 12450.0;     // Mileage (km)
-    bool is_charging = false;      // Charging status
-    bool is_light_on = false;      // Light status (for Dashboard testing)
+    float battery_soc = 85.0f;      // Battery State of Charge (%)
+    float vehicle_speed = 0.0f;     // Speed (km/h)
+    float motor_temp = 35.0f;       // Motor temperature (°C)
+    float odometer = 12450.0f;      // Mileage (km)
+    bool is_charging = false;       // Charging status
+    bool is_light_on = false;       // Light status (for Dashboard testing)
 
     int tick = 0;
 
@@ -213,10 +192,10 @@ int main() {
             }
         } else {
             // Simulate driving
-            vehicle_speed = 60.0f + (float)(tick % 15); // Fluctuating speed
+            vehicle_speed = 60.0f + (tick % 15); // Fluctuating speed
             battery_soc -= 0.05f * (vehicle_speed / 60.0f);
             motor_temp += 0.2f;
-            odometer += (double)vehicle_speed / 3600.0; // Distance traveled in 1 second
+            odometer += vehicle_speed / 3600.0f; // Distance traveled in 1 second
 
             // Low battery warning
             if (battery_soc <= 15.0f) {
@@ -241,11 +220,13 @@ int main() {
             std::cout << "----------------------------\\n" << std::endl;
         }
 
+        // Sleep for 1 second per loop
         std::this_thread::sleep_for(std::chrono::seconds(1));
     }
 
     return 0;
-}`;
+}
+`;
 
 const CPP_MULTI_FILES = [
   {

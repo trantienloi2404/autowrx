@@ -29,20 +29,23 @@ function parsePrimitive(value) {
 
 function collectWatchNamesFromCppSource(cwd) {
   const out = [];
-  const sourcePath = path.join(cwd || process.cwd(), "src", "main.cpp");
-  try {
-    const content = fs.readFileSync(sourcePath, "utf8");
-    // Only match declarations that start at the beginning of a line (outermost scope)
-    const re =
-      /^(?:int|double|float|bool|std::string)\s+([A-Za-z_]\w*)\s*(?:=|;)/gm;
-    let m = re.exec(content);
-    while (m) {
-      const name = String(m[1] || "").trim();
-      if (name && !out.includes(name)) out.push(name);
-      m = re.exec(content);
+  const candidatePaths = [path.join(cwd || process.cwd(), "src", "main.cpp")];
+
+  for (const sourcePath of candidatePaths) {
+    try {
+      const content = fs.readFileSync(sourcePath, "utf8");
+      // Match declarations that might be indented (e.g., inside functions)
+      const re =
+        /^\s*(?:int|double|float|bool|std::string)\s+([A-Za-z_]\w*)\s*(?:=|;)/gm;
+      let m = re.exec(content);
+      while (m) {
+        const name = String(m[1] || "").trim();
+        if (name && !out.includes(name)) out.push(name);
+        m = re.exec(content);
+      }
+    } catch {
+      // ignore source parse failures
     }
-  } catch {
-    // ignore source parse failures
   }
   return out;
 }

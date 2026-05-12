@@ -41,7 +41,7 @@ function collectWatchNamesFromRustSource(cwd) {
     try {
       const content = fs.readFileSync(sourcePath, "utf8");
       // Only match declarations at the beginning of a line (outermost scope)
-      const re = /^let\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=]+)?\s*=\s*/gm;
+      const re = /^\s*let\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=]+)?\s*=\s*/gm;
       let m = re.exec(content);
       while (m) {
         const name = String(m[1] || "").trim();

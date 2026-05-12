@@ -267,14 +267,16 @@ const DEFAULT_WIDGET_CONFIG = JSON.stringify({
       widget: 'Embedded-Widget',
       options: {
         api: 'Vehicle.Body.Lights.Beam.Low.IsOn',
-        mappings: [
+        defaultImgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_off.png',
+        displayExactMatch: true,
+        valueMaps: [
           {
-            value: 'true',
-            url: 'https://upload.digitalauto.tech/data/store-be/8354c03c-834c-4e83-93ef-952b614006f1.png',
+            value: true,
+            imgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_on.png',
           },
           {
-            value: 'false',
-            url: 'https://upload.digitalauto.tech/data/store-be/c9965d14-3d92-4ec2-9e2a-0639f7d38318.png',
+            value: false,
+            imgUrl: 'https://bestudio.digitalauto.tech/project/Ml2Sc9TYoOHc/light_off.png',
           },
         ],
         url: 'https://store-be.digitalauto.tech/data/store-be/Image%20by%20Signal%20value/latest/index/index.html',

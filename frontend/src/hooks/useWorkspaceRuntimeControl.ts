@@ -459,6 +459,7 @@ export default function useWorkspaceRuntimeControl() {
     canSendStdin,
     runDisabledReason,
     clearOutput,
+    appendRuntimeText,
     handleRun,
     submitStdinLine,
     stopRun,

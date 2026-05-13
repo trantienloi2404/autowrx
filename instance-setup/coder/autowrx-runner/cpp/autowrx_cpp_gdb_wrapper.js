@@ -29,7 +29,10 @@ function parsePrimitive(value) {
 
 function collectWatchNamesFromCppSource(cwd) {
   const out = [];
-  const candidatePaths = [path.join(cwd || process.cwd(), "src", "main.cpp")];
+  const candidatePaths = [
+    path.join(cwd || process.cwd(), "main.cpp"),
+    path.join(cwd || process.cwd(), "src", "main.cpp"),
+  ];
 
   for (const sourcePath of candidatePaths) {
     try {
@@ -88,13 +91,18 @@ function parseVariables(doneLine) {
   return vars;
 }
 
-function isCppProjectSourcePath(filePath) {
+function isCppProjectSourcePath(filePath, cwd) {
   if (!filePath) return false;
-  const p = String(filePath);
+  const p = path.resolve(String(filePath));
+  const projectRoot = path.resolve(cwd || process.cwd());
 
+  // Ignore system headers and libraries
   if (p.startsWith("/lib/")) return false;
   if (p.startsWith("/usr/")) return false;
   if (p.startsWith("/opt/")) return false;
+
+  // If it's inside our current working directory, it's likely a project file
+  if (p.startsWith(projectRoot)) return true;
 
   if (p.includes("/src/")) return true;
   if (
@@ -108,7 +116,7 @@ function isCppProjectSourcePath(filePath) {
   return false;
 }
 
-function parseFirstCppFrameLevel(doneLine) {
+function parseFirstCppFrameLevel(doneLine, cwd) {
   const frameTupleRe = /frame=\{([^{}]*)\}/g;
   let tuple = frameTupleRe.exec(doneLine);
 
@@ -123,26 +131,7 @@ function parseFirstCppFrameLevel(doneLine) {
     const fullMatch =
       block.match(/fullname="([^"]+)"/) || block.match(/file="([^"]+)"/);
     const file = fullMatch ? fullMatch[1] : "";
-    if (isCppProjectSourcePath(file)) return level;
-    tuple = frameTupleRe.exec(doneLine);
-  }
-
-  tuple = frameTupleRe.exec(doneLine);
-  while (tuple) {
-    const block = tuple[1];
-    const levelMatch = block.match(/level="(\d+)"/);
-    const fullMatch =
-      block.match(/fullname="([^"]+)"/) || block.match(/file="([^"]+)"/);
-    const file = fullMatch ? fullMatch[1] : "";
-
-    if (
-      levelMatch &&
-      file &&
-      !file.startsWith("/lib/") &&
-      !file.startsWith("/usr/")
-    ) {
-      return Number.parseInt(levelMatch[1], 10);
-    }
+    if (isCppProjectSourcePath(file, cwd)) return level;
     tuple = frameTupleRe.exec(doneLine);
   }
 
@@ -349,7 +338,7 @@ class GdbWrapper {
 
     try {
       const framesResp = await this.send("-stack-list-frames");
-      const level = parseFirstCppFrameLevel(framesResp);
+      const level = parseFirstCppFrameLevel(framesResp, this.cwd);
       await this.send(`-stack-select-frame ${level}`);
     } catch {
       // ignore

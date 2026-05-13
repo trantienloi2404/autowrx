@@ -33,15 +33,18 @@ function parsePrimitive(value) {
 function collectWatchNamesFromRustSource(cwd) {
   const out = [];
   const candidatePaths = [
+    path.join(cwd || process.cwd(), "main.rs"),
     path.join(cwd || process.cwd(), "src", "main.rs"),
     path.join(cwd || process.cwd(), "src", "lib.rs"),
   ];
 
   for (const sourcePath of candidatePaths) {
     try {
+      if (!fs.existsSync(sourcePath)) continue;
       const content = fs.readFileSync(sourcePath, "utf8");
-      // Only match declarations at the beginning of a line (outermost scope)
-      const re = /^\s*let\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=]+)?\s*=\s*/gm;
+      // Match 'let' for locals and 'static' for globals
+      const re =
+        /^\s*(?:let|static)\s+(?:mut\s+)?([A-Za-z_]\w*)\s*(?::[^=]+)?\s*(?:=)/gm;
       let m = re.exec(content);
       while (m) {
         const name = String(m[1] || "").trim();
@@ -95,9 +98,10 @@ function parseVariables(doneLine) {
   return vars;
 }
 
-function isRustProjectSourcePath(filePath) {
+function isRustProjectSourcePath(filePath, cwd) {
   if (!filePath) return false;
-  const p = String(filePath);
+  const p = path.resolve(String(filePath));
+  const projectRoot = path.resolve(cwd || process.cwd());
 
   if (
     p.startsWith("/lib/") ||
@@ -113,13 +117,16 @@ function isRustProjectSourcePath(filePath) {
   )
     return false;
 
+  // If it's inside our current working directory, it's likely a project file
+  if (p.startsWith(projectRoot)) return true;
+
   if (p.includes("/src/main.rs") || p.endsWith("/src/main.rs")) return true;
   if (p.includes("/src/lib.rs") || p.includes("/src/")) return true;
 
   return false;
 }
 
-function parseFirstRustFrameLevel(doneLine) {
+function parseFirstRustFrameLevel(doneLine, cwd) {
   const frameTupleRe = /frame=\{([^{}]*)\}/g;
   let tuple = frameTupleRe.exec(doneLine);
 
@@ -134,26 +141,7 @@ function parseFirstRustFrameLevel(doneLine) {
     const fullMatch =
       block.match(/fullname="([^"]+)"/) || block.match(/file="([^"]+)"/);
     const file = fullMatch ? fullMatch[1] : "";
-    if (isRustProjectSourcePath(file)) return level;
-    tuple = frameTupleRe.exec(doneLine);
-  }
-
-  tuple = frameTupleRe.exec(doneLine);
-  while (tuple) {
-    const block = tuple[1];
-    const levelMatch = block.match(/level="(\d+)"/);
-    const fullMatch =
-      block.match(/fullname="([^"]+)"/) || block.match(/file="([^"]+)"/);
-    const file = fullMatch ? fullMatch[1] : "";
-
-    if (
-      levelMatch &&
-      file &&
-      !file.startsWith("/lib/") &&
-      !file.includes("/rustc/")
-    ) {
-      return Number.parseInt(levelMatch[1], 10);
-    }
+    if (isRustProjectSourcePath(file, cwd)) return level;
     tuple = frameTupleRe.exec(doneLine);
   }
 
@@ -355,7 +343,7 @@ class GdbWrapper {
   async onStopped() {
     try {
       const framesResp = await this.send("-stack-list-frames");
-      const level = parseFirstRustFrameLevel(framesResp);
+      const level = parseFirstRustFrameLevel(framesResp, this.cwd);
       await this.send(`-stack-select-frame ${level}`);
     } catch {
       // ignore

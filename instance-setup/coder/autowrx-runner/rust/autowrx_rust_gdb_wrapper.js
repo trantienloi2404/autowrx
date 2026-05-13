@@ -80,23 +80,6 @@ function parseFrame(doneLine) {
   };
 }
 
-function parseVariables(doneLine) {
-  const vars = {};
-  const tupleRe = /\{([^{}]*)\}/g;
-  let tuple = tupleRe.exec(doneLine);
-  while (tuple) {
-    const block = tuple[1];
-    const nameMatch = block.match(/name="((?:[^"\\]|\\.)*)"/);
-    const valueMatch = block.match(/value="((?:[^"\\]|\\.)*)"/);
-    const name = nameMatch ? nameMatch[1].replace(/\\"/g, '"') : "";
-    if (name && !name.startsWith("__") && valueMatch) {
-      const rawValue = valueMatch[1].replace(/\\"/g, '"');
-      vars[name] = parsePrimitive(rawValue);
-    }
-    tuple = tupleRe.exec(doneLine);
-  }
-  return vars;
-}
 
 function isRustProjectSourcePath(filePath, cwd) {
   if (!filePath) return false;

@@ -76,7 +76,9 @@ const DaWorkspaceRuntimeControl: FC = () => {
     stopRun: stopRunWorkspace,
     requestWriteSignalValue,
     writeVarsValue,
-  } = useWorkspaceRuntimeControl()
+  } = useWorkspaceRuntimeControl({
+    onLegacyWrite: (obj) => runTimeRef.current?.writeSignalsValue(obj),
+  })
 
   const [showRtDialog, setShowRtDialog] = useState<boolean>(false)
   const [showConfigDialog, setShowConfigDialog] = useState<boolean>(false)
